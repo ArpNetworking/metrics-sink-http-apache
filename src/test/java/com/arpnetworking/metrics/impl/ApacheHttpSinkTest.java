@@ -18,6 +18,7 @@ package com.arpnetworking.metrics.impl;
 
 import com.arpnetworking.metrics.Quantity;
 import com.arpnetworking.metrics.Sink;
+import com.arpnetworking.metrics.Units;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.client.RequestPatternBuilder;
 import com.github.tomakehurst.wiremock.client.WireMock;
@@ -26,11 +27,15 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Tests for {@link ApacheHttpSink}.
@@ -84,12 +89,135 @@ public class ApacheHttpSinkTest {
                         .withStatus(200)));
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+//                .setUri("http://localhost:7090" + PATH)
                 .build();
+        final Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put("foo", "bar");
+        annotations.put("_end", Instant.now().atZone(ZoneId.of("UTC")).format(DateTimeFormatter.ISO_INSTANT));
+        annotations.put("_host", "some.host.com");
+        annotations.put("_service", "myservice");
+        annotations.put("_cluster", "mycluster");
+        annotations.put("_id", UUID.randomUUID().toString());
         final TsdEvent event = new TsdEvent(
-                ANNOTATIONS,
-                TEST_EMPTY_SERIALIZATION_TIMERS,
+                annotations,
+                createQuantityMap("timer", TsdQuantity.newInstance(123, Units.NANOSECOND)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(10, Units.BYTE)));
+        sink.record(event);
+
+        Thread.sleep(1000);
+
+        // Request matcher
+        final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
+                .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
+
+        // Assert that data was sent
+        _wireMock.verifyThat(1, requestPattern);
+    }
+
+    @Test
+    public void compoundUnits() throws InterruptedException {
+        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+                .willReturn(WireMock.aResponse()
+                        .withStatus(200)));
+        final Sink sink = new ApacheHttpSink.Builder()
+                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .build();
+        final Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put("foo", "bar");
+        final TsdEvent event = new TsdEvent(
+                annotations,
+                createQuantityMap("timer", TsdQuantity.newInstance(123, Units.NANOSECOND),
+                        "minutes", TsdQuantity.newInstance(5, Units.MINUTE),
+                        "hours", TsdQuantity.newInstance(5, Units.HOUR),
+                        "day", TsdQuantity.newInstance(5, Units.DAY),
+                        "week", TsdQuantity.newInstance(5, Units.WEEK)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8, Units.BYTE)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(10, Units.BITS_PER_SECOND),
+                        "hdd_c", TsdQuantity.newInstance(40, Units.CELSIUS),
+                        "hdd_k", TsdQuantity.newInstance(400, Units.KELVIN),
+                        "hdd_f", TsdQuantity.newInstance(100, Units.FAHRENHEIT)));
+        sink.record(event);
+
+        Thread.sleep(1000);
+
+        // Request matcher
+        final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
+                .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
+
+        // Assert that data was sent
+        _wireMock.verifyThat(1, requestPattern);
+    }
+
+    @Test
+    public void noUnits() throws InterruptedException {
+        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+                .willReturn(WireMock.aResponse()
+                        .withStatus(200)));
+        final Sink sink = new ApacheHttpSink.Builder()
+                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .build();
+        final Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put("foo", "bar");
+        final TsdEvent event = new TsdEvent(
+                annotations,
+                createQuantityMap("timer", TsdQuantity.newInstance(8, null)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(8, null)));
+        sink.record(event);
+
+        Thread.sleep(1000);
+
+        // Request matcher
+        final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
+                .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
+
+        // Assert that data was sent
+        _wireMock.verifyThat(1, requestPattern);
+    }
+
+    @Test
+    public void customUnit() throws InterruptedException {
+        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+                .willReturn(WireMock.aResponse()
+                        .withStatus(200)));
+        final Sink sink = new ApacheHttpSink.Builder()
+                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .build();
+        final Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put("foo", "bar");
+        final TsdEvent event = new TsdEvent(
+                annotations,
+                createQuantityMap("timer", TsdQuantity.newInstance(8, () -> "Foo")),
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
                 TEST_EMPTY_SERIALIZATION_GAUGES);
+        sink.record(event);
+
+        Thread.sleep(1000);
+
+        // Request matcher
+        final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
+                .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
+
+        // Assert that data was sent
+        _wireMock.verifyThat(1, requestPattern);
+    }
+
+    @Test
+    public void unsupportedBaseUnit() throws InterruptedException {
+        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+                .willReturn(WireMock.aResponse()
+                        .withStatus(200)));
+        final Sink sink = new ApacheHttpSink.Builder()
+                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .build();
+        final Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put("foo", "bar");
+        final TsdEvent event = new TsdEvent(
+                annotations,
+                createQuantityMap("timer", TsdQuantity.newInstance(8, Units.ROTATION)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8, Units.ROTATION)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(8, Units.ROTATION)));
         sink.record(event);
 
         Thread.sleep(1000);

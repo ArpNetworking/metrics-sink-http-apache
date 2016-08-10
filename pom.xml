@@ -59,7 +59,7 @@
 
   <properties>
     <!--Dependency versions-->
-    <client.protocol.version>1.0.0-SNAPSHOT</client.protocol.version>
+    <client.protocol.version>0.9.1</client.protocol.version>
     <hamcrest.version>2.0.0.0</hamcrest.version>
     <junit.version>4.12</junit.version>
     <metrics.client.version>0.4.5</metrics.client.version>
@@ -68,6 +68,8 @@
     <apache.http.client.version>4.5.2</apache.http.client.version>
     <apache.http.core.version>4.4.4</apache.http.core.version>
     <wiremock.version>1.57</wiremock.version>
+    <jsr305.version>3.0.1</jsr305.version>
+    <protobuf.version>3.0.0</protobuf.version>
 
     <!-- Findbugs -->
     <findbugs.exclude>${project.basedir}/findbugs.exclude.xml</findbugs.exclude>
@@ -115,13 +117,18 @@
     </dependency>
     <!-- Essential -->
     <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java</artifactId>
+      <version>${protobuf.version}</version>
+    </dependency>
+    <dependency>
       <groupId>com.arpnetworking.metrics</groupId>
       <artifactId>metrics-client</artifactId>
       <version>${metrics.client.version}</version>
     </dependency>
     <dependency>
-      <groupId>com.inscopemetrics.metrics</groupId>
-      <artifactId>client-protocol</artifactId>
+      <groupId>com.inscopemetrics.client</groupId>
+      <artifactId>protocol</artifactId>
       <version>${client.protocol.version}</version>
     </dependency>
     <dependency>
@@ -158,6 +165,11 @@
       <artifactId>wiremock</artifactId>
       <version>${wiremock.version}</version>
       <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.google.code.findbugs</groupId>
+      <artifactId>jsr305</artifactId>
+      <version>${jsr305.version}</version>
     </dependency>
   </dependencies>
 </project>

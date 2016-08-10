@@ -15,9 +15,13 @@
  */
 package com.arpnetworking.metrics.impl;
 
+import com.arpnetworking.metrics.CompoundUnit;
 import com.arpnetworking.metrics.Event;
+import com.arpnetworking.metrics.Quantity;
 import com.arpnetworking.metrics.Sink;
-import com.arpnetworking.metrics.aggregation.protocol.Client;
+import com.arpnetworking.metrics.Unit;
+import com.google.protobuf.ByteString;
+import com.inscopemetrics.client.protocol.ClientV1;
 import org.apache.http.HttpHeaders;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
@@ -29,10 +33,15 @@ import org.apache.http.message.BasicHeader;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import javax.annotation.Nullable;
 
 /**
  * Http sink using the Protobuf format for metrics and the Apache HTTP library.
@@ -85,10 +94,132 @@ public final class ApacheHttpSink implements Sink {
         }
 
         private byte[] serializeEvent() {
-            final Client.Request.Builder requestBuilder = Client.Request.newBuilder();
-            //TODO(brandon): actually serialize
-            final Client.Request request = requestBuilder.build();
+            final ClientV1.RecordSet.Builder requestBuilder = ClientV1.RecordSet.newBuilder();
+            final ClientV1.Record.Builder builder = ClientV1.Record.newBuilder();
+            for (Map.Entry<String, String> annotation : _event.getAnnotations().entrySet()) {
+                builder.addAnnotations(
+                        ClientV1.AnnotationEntry.newBuilder()
+                                .setName(annotation.getKey())
+                                .setValue(annotation.getValue())
+                                .build());
+            }
+
+            for (Map.Entry<String, List<Quantity>> entry : _event.getCounterSamples().entrySet()) {
+                builder.addCounters(ClientV1.MetricEntry.newBuilder()
+                        .addAllSamples(buildQuantities(entry.getValue()))
+                        .setName(entry.getKey())
+                        .build());
+            }
+
+            for (Map.Entry<String, List<Quantity>> entry : _event.getTimerSamples().entrySet()) {
+                builder.addTimers(ClientV1.MetricEntry.newBuilder()
+                        .addAllSamples(buildQuantities(entry.getValue()))
+                        .setName(entry.getKey())
+                        .build());
+            }
+
+            for (Map.Entry<String, List<Quantity>> entry : _event.getGaugeSamples().entrySet()) {
+                builder.addGauges(ClientV1.MetricEntry.newBuilder()
+                        .addAllSamples(buildQuantities(entry.getValue()))
+                        .setName(entry.getKey())
+                        .build());
+            }
+
+            //TODO(brandonarp): just pull from dimensions once the library supports it
+            final String host = _event.getAnnotations().get("_host");
+            if (host != null) {
+                builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("host").setValue(host).build());
+            }
+
+            final String service = _event.getAnnotations().get("_service");
+            if (service != null) {
+                builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("service").setValue(service).build());
+            }
+
+            final String cluster = _event.getAnnotations().get("_cluster");
+            if (cluster != null) {
+                builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("cluster").setValue(cluster).build());
+            }
+
+            final String timestamp = _event.getAnnotations().get("_end");
+            if (timestamp != null) {
+                final ZonedDateTime time = ZonedDateTime.parse(timestamp);
+                builder.setMillisSinceEpoch(time.toInstant().toEpochMilli());
+            }
+
+            final String id = _event.getAnnotations().get("_id");
+            if (id != null) {
+                final UUID uuid = UUID.fromString(id);
+                final ByteBuffer buffer = ByteBuffer.wrap(new byte[16]);
+                buffer.putLong(uuid.getMostSignificantBits());
+                buffer.putLong(uuid.getLeastSignificantBits());
+                builder.setId(ByteString.copyFrom(buffer));
+            }
+            requestBuilder.addRecords(builder.build());
+            final ClientV1.RecordSet request = requestBuilder.build();
             return request.toByteArray();
+        }
+
+        private List<ClientV1.DoubleQuantity> buildQuantities(final List<Quantity> quantities) {
+            final List<ClientV1.DoubleQuantity> timerQuantities = new ArrayList<>(quantities.size());
+            for (Quantity quantity : quantities) {
+                final ClientV1.DoubleQuantity.Builder quantityBuilder = ClientV1.DoubleQuantity.newBuilder()
+                        .setValue(quantity.getValue().doubleValue());
+                final ClientV1.CompoundUnit unit = buildUnit(quantity.getUnit());
+                if (unit != null) {
+                    quantityBuilder.setUnit(unit);
+                }
+                timerQuantities.add(quantityBuilder.build());
+            }
+            return timerQuantities;
+        }
+
+        @Nullable
+        private ClientV1.CompoundUnit buildUnit(final Unit unit) {
+            if (unit == null) {
+                return null;
+            } else {
+                final ClientV1.CompoundUnit.Builder builder = ClientV1.CompoundUnit.newBuilder();
+                if (unit instanceof CompoundUnit) {
+                    final CompoundUnit compoundUnit = (CompoundUnit) unit;
+                    for (Unit numeratorUnit : compoundUnit.getNumeratorUnits()) {
+                        builder.addNumerator(mapUnit(numeratorUnit));
+                    }
+
+                    for (Unit denominatorUnit : compoundUnit.getDenominatorUnits()) {
+                        builder.addDenominator(mapUnit(denominatorUnit));
+                    }
+                } else {
+                    final ClientV1.Unit numeratorUnit = mapUnit(unit);
+                    if (numeratorUnit != null) {
+                        builder.addNumerator(numeratorUnit);
+                    }
+                }
+                return builder.build();
+            }
+        }
+
+        private ClientV1.Unit mapUnit(final Unit unit) {
+            final BaseUnit baseUnit;
+            final BaseScale baseScale;
+            if (unit instanceof TsdUnit) {
+                final TsdUnit tsdUnit = (TsdUnit) unit;
+                baseUnit = tsdUnit.getBaseUnit();
+                baseScale = tsdUnit.getBaseScale();
+            } else if (unit instanceof BaseUnit) {
+                baseUnit = (BaseUnit) unit;
+                baseScale = null;
+            } else {
+                return null;
+            }
+
+            final ClientV1.Unit.Builder builder = ClientV1.Unit.newBuilder();
+            builder.setType(ClientV1.Unit.Type.valueOf(baseUnit.name()));
+            if (baseScale != null) {
+                builder.setScale(ClientV1.Unit.Scale.valueOf(baseScale.name()));
+            }
+
+            return builder.build();
         }
 
         private HttpDispatch(final Event event) {
