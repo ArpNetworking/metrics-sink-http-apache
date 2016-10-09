@@ -41,6 +41,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.LongConsumer;
 import javax.annotation.Nullable;
 
 /**
@@ -141,11 +142,8 @@ public final class ApacheHttpSink implements Sink {
                 builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("cluster").setValue(cluster).build());
             }
 
-            final String timestamp = _event.getAnnotations().get("_end");
-            if (timestamp != null) {
-                final ZonedDateTime time = ZonedDateTime.parse(timestamp);
-                builder.setMillisSinceEpoch(time.toInstant().toEpochMilli());
-            }
+            extractTimestamp("_end", builder::setEndMillisSinceEpoch);
+            extractTimestamp("_start", builder::setStartMillisSinceEpoch);
 
             final String id = _event.getAnnotations().get("_id");
             if (id != null) {
@@ -158,6 +156,14 @@ public final class ApacheHttpSink implements Sink {
             requestBuilder.addRecords(builder.build());
             final ClientV1.RecordSet request = requestBuilder.build();
             return request.toByteArray();
+        }
+
+        private void extractTimestamp(final String key, final LongConsumer setter) {
+            final String endTimestamp = _event.getAnnotations().get(key);
+            if (endTimestamp != null) {
+                final ZonedDateTime time = ZonedDateTime.parse(endTimestamp);
+                setter.accept(time.toInstant().toEpochMilli());
+            }
         }
 
         private List<ClientV1.DoubleQuantity> buildQuantities(final List<Quantity> quantities) {

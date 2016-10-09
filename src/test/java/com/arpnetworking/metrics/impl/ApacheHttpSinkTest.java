@@ -93,6 +93,7 @@ public class ApacheHttpSinkTest {
                 .build();
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
+        annotations.put("_start", Instant.now().minusMillis(812).atZone(ZoneId.of("UTC")).format(DateTimeFormatter.ISO_INSTANT));
         annotations.put("_end", Instant.now().atZone(ZoneId.of("UTC")).format(DateTimeFormatter.ISO_INSTANT));
         annotations.put("_host", "some.host.com");
         annotations.put("_service", "myservice");
