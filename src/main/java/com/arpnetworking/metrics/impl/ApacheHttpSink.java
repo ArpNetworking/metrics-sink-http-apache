@@ -151,6 +151,7 @@ public final class ApacheHttpSink implements Sink {
                 final ByteBuffer buffer = ByteBuffer.wrap(new byte[16]);
                 buffer.putLong(uuid.getMostSignificantBits());
                 buffer.putLong(uuid.getLeastSignificantBits());
+                buffer.rewind();
                 builder.setId(ByteString.copyFrom(buffer));
             }
             requestBuilder.addRecords(builder.build());
