@@ -225,7 +225,7 @@ public final class ApacheHttpSink implements Sink {
             if (baseScale != null) {
                 builder.setScale(ClientV1.Unit.Scale.valueOf(baseScale.name()));
             } else {
-                builder.setScale(ClientV1.Unit.Scale.UNRECOGNIZED);
+                builder.setScale(ClientV1.Unit.Scale.UNIT);
             }
 
             return builder.build();
