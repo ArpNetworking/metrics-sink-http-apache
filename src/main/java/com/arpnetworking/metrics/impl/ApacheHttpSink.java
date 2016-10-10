@@ -39,8 +39,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongConsumer;
 import javax.annotation.Nullable;
 
@@ -52,12 +54,25 @@ import javax.annotation.Nullable;
 public final class ApacheHttpSink implements Sink {
     @Override
     public void record(final Event event) {
-        _executor.execute(new HttpDispatch(event));
+        _events.push(event);
+        final int events = _eventsCount.incrementAndGet();
+        if (events > _bufferSize) {
+            _events.pollFirst();
+        }
+    }
+
+    static void uninterruptableSleep(final int millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (final InterruptedException e) {
+        }
     }
 
     private ApacheHttpSink(final Builder builder) {
         //TODO(brandon): Limit the number of work units buffered
-        _executor = Executors.newFixedThreadPool(builder._parallelism, (runnable) -> new Thread(runnable, "ApacheHttpSinkWorker"));
+        final ExecutorService executor = Executors.newFixedThreadPool(
+                builder._parallelism,
+                (runnable) -> new Thread(runnable, "ApacheHttpSinkWorker"));
         final PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
         connectionManager.setDefaultMaxPerRoute(builder._parallelism);
         connectionManager.setMaxTotal(builder._parallelism);
@@ -65,23 +80,69 @@ public final class ApacheHttpSink implements Sink {
                 .setConnectionManager(connectionManager)
                 .build();
         _uri = builder._uri;
+        _bufferSize = builder._bufferSize;
+        _maxBatchSize = builder._maxBatchSize;
+        _sleepMillis = builder._emptyQueueSleepMillis;
+        for (int i = 0; i < builder._parallelism; i++) {
+            executor.execute(new HttpDispatch());
+        }
     }
 
-    private final ExecutorService _executor;
     private final CloseableHttpClient _httpClient;
     private final String _uri;
+    private final int _bufferSize;
+    private final int _maxBatchSize;
+    private final int _sleepMillis;
+    private final ConcurrentLinkedDeque<Event> _events = new ConcurrentLinkedDeque<>();
+    private final AtomicInteger _eventsCount = new AtomicInteger(0);
+//    private final AtomicBoolean _run = new AtomicBoolean(true);
 
     private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger(ApacheHttpSink.class);
 
     private final class HttpDispatch implements Runnable {
         @Override
         public void run() {
+            ClientV1.RecordSet.Builder requestBuilder = ClientV1.RecordSet.newBuilder();
+            while (true) {
+                // Collect a set of events to send
+                // NOTE: This also builds the serialization types in order to spend more time
+                // allowing more records to arrive in the batch
+                int collected = 0;
+
+                Event event;
+                do {
+                    event = _events.pollFirst();
+                    if (event == null) {
+                        break;
+                    }
+
+                    _eventsCount.decrementAndGet();
+                    collected++;
+                    requestBuilder.addRecords(serializeEvent(event));
+                } while (collected < _maxBatchSize);
+
+                if (collected > 0) {
+                    final ClientV1.RecordSet recordSet = requestBuilder.build();
+                    dispatchRequest(recordSet);
+
+                    // Prepare the next request builder
+                    requestBuilder = ClientV1.RecordSet.newBuilder();
+                }
+
+                // Sleep if we didn't max out the batch size
+                if (event == null) {
+                    uninterruptableSleep(_sleepMillis);
+                }
+            }
+        }
+
+        private void dispatchRequest(final ClientV1.RecordSet recordSet) {
             final HttpPost post = new HttpPost(_uri);
 
             post.setHeader(new BasicHeader(HttpHeaders.CONTENT_TYPE, "application/octet-stream"));
-            post.setEntity(new ByteArrayEntity(serializeEvent()));
-            try {
-                final CloseableHttpResponse response = _httpClient.execute(post);
+            post.setEntity(new ByteArrayEntity(recordSet.toByteArray()));
+
+            try (final CloseableHttpResponse response = _httpClient.execute(post)) {
                 final int statusCode = response.getStatusLine().getStatusCode();
                 if ((statusCode / 100) != 2) {
                     LOGGER.error(
@@ -94,10 +155,9 @@ public final class ApacheHttpSink implements Sink {
             }
         }
 
-        private byte[] serializeEvent() {
-            final ClientV1.RecordSet.Builder requestBuilder = ClientV1.RecordSet.newBuilder();
+        private ClientV1.Record serializeEvent(final Event event) {
             final ClientV1.Record.Builder builder = ClientV1.Record.newBuilder();
-            for (Map.Entry<String, String> annotation : _event.getAnnotations().entrySet()) {
+            for (Map.Entry<String, String> annotation : event.getAnnotations().entrySet()) {
                 builder.addAnnotations(
                         ClientV1.AnnotationEntry.newBuilder()
                                 .setName(annotation.getKey())
@@ -105,21 +165,21 @@ public final class ApacheHttpSink implements Sink {
                                 .build());
             }
 
-            for (Map.Entry<String, List<Quantity>> entry : _event.getCounterSamples().entrySet()) {
+            for (Map.Entry<String, List<Quantity>> entry : event.getCounterSamples().entrySet()) {
                 builder.addCounters(ClientV1.MetricEntry.newBuilder()
                         .addAllSamples(buildQuantities(entry.getValue()))
                         .setName(entry.getKey())
                         .build());
             }
 
-            for (Map.Entry<String, List<Quantity>> entry : _event.getTimerSamples().entrySet()) {
+            for (Map.Entry<String, List<Quantity>> entry : event.getTimerSamples().entrySet()) {
                 builder.addTimers(ClientV1.MetricEntry.newBuilder()
                         .addAllSamples(buildQuantities(entry.getValue()))
                         .setName(entry.getKey())
                         .build());
             }
 
-            for (Map.Entry<String, List<Quantity>> entry : _event.getGaugeSamples().entrySet()) {
+            for (Map.Entry<String, List<Quantity>> entry : event.getGaugeSamples().entrySet()) {
                 builder.addGauges(ClientV1.MetricEntry.newBuilder()
                         .addAllSamples(buildQuantities(entry.getValue()))
                         .setName(entry.getKey())
@@ -127,25 +187,25 @@ public final class ApacheHttpSink implements Sink {
             }
 
             //TODO(brandonarp): just pull from dimensions once the library supports it
-            final String host = _event.getAnnotations().get("_host");
+            final String host = event.getAnnotations().get("_host");
             if (host != null) {
                 builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("host").setValue(host).build());
             }
 
-            final String service = _event.getAnnotations().get("_service");
+            final String service = event.getAnnotations().get("_service");
             if (service != null) {
                 builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("service").setValue(service).build());
             }
 
-            final String cluster = _event.getAnnotations().get("_cluster");
+            final String cluster = event.getAnnotations().get("_cluster");
             if (cluster != null) {
                 builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("cluster").setValue(cluster).build());
             }
 
-            extractTimestamp("_end", builder::setEndMillisSinceEpoch);
-            extractTimestamp("_start", builder::setStartMillisSinceEpoch);
+            extractTimestamp(event, "_end", builder::setEndMillisSinceEpoch);
+            extractTimestamp(event, "_start", builder::setStartMillisSinceEpoch);
 
-            final String id = _event.getAnnotations().get("_id");
+            final String id = event.getAnnotations().get("_id");
             if (id != null) {
                 final UUID uuid = UUID.fromString(id);
                 final ByteBuffer buffer = ByteBuffer.wrap(new byte[16]);
@@ -154,13 +214,11 @@ public final class ApacheHttpSink implements Sink {
                 buffer.rewind();
                 builder.setId(ByteString.copyFrom(buffer));
             }
-            requestBuilder.addRecords(builder.build());
-            final ClientV1.RecordSet request = requestBuilder.build();
-            return request.toByteArray();
+            return builder.build();
         }
 
-        private void extractTimestamp(final String key, final LongConsumer setter) {
-            final String endTimestamp = _event.getAnnotations().get(key);
+        private void extractTimestamp(final Event event, final String key, final LongConsumer setter) {
+            final String endTimestamp = event.getAnnotations().get(key);
             if (endTimestamp != null) {
                 final ZonedDateTime time = ZonedDateTime.parse(endTimestamp);
                 setter.accept(time.toInstant().toEpochMilli());
@@ -230,12 +288,6 @@ public final class ApacheHttpSink implements Sink {
 
             return builder.build();
         }
-
-        private HttpDispatch(final Event event) {
-            _event = event;
-        }
-
-        private final Event _event;
     }
 
     /**
@@ -281,6 +333,28 @@ public final class ApacheHttpSink implements Sink {
         }
 
         /**
+         * Set the empty queue sleep duration, in milliseconds. Optional; default is 500.
+         *
+         * @param value The sleep time.
+         * @return This {@link Builder} instance.
+         */
+        public Builder setEmptyQueueSleepMillis(final Integer value) {
+            _emptyQueueSleepMillis = value;
+            return this;
+        }
+
+        /**
+         * Set the maximum batch size (records to send in each request). Optional; default is 500.
+         *
+         * @param value The maximum batch size.
+         * @return This {@link Builder} instance.
+         */
+        public Builder setMaxBatchSize(final Integer value) {
+            _maxBatchSize = value;
+            return this;
+        }
+
+        /**
          * Create an instance of {@link Sink}.
          *
          * @return Instance of {@link Sink}.
@@ -319,6 +393,12 @@ public final class ApacheHttpSink implements Sink {
             if (_parallelism == null) {
                 _parallelism = DEFAULT_PARALLELISM;
             }
+            if (_maxBatchSize == null) {
+                _maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
+            }
+            if (_emptyQueueSleepMillis == null) {
+                _emptyQueueSleepMillis = DEFAULT_EMPTY_QUEUE_SLEEP_MILLIS;
+            }
         }
 
         /**
@@ -335,9 +415,13 @@ public final class ApacheHttpSink implements Sink {
         private Integer _bufferSize = DEFAULT_BUFFER_SIZE;
         private String _uri = DEFAULT_URI;
         private Integer _parallelism = DEFAULT_PARALLELISM;
+        private Integer _maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
+        private Integer _emptyQueueSleepMillis = DEFAULT_EMPTY_QUEUE_SLEEP_MILLIS;
 
         private static final Integer DEFAULT_BUFFER_SIZE = 10000;
+        private static final Integer DEFAULT_MAX_BATCH_SIZE = 500;
+        private static final Integer DEFAULT_EMPTY_QUEUE_SLEEP_MILLIS = 500;
         private static final String DEFAULT_URI = "http://localhost:7090/metrics/v1/application";
-        private static final Integer DEFAULT_PARALLELISM = 5;
+        private static final Integer DEFAULT_PARALLELISM = 2;
     }
 }

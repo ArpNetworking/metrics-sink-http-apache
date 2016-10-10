@@ -75,8 +75,8 @@
     <findbugs.exclude>${project.basedir}/findbugs.exclude.xml</findbugs.exclude>
 
     <!-- Code Coverage -->
-    <jacoco.check.line.coverage>1.0</jacoco.check.line.coverage>
-    <jacoco.check.branch.coverage>1.0</jacoco.check.branch.coverage>
+    <jacoco.check.line.coverage>0.95</jacoco.check.line.coverage>
+    <jacoco.check.branch.coverage>0.91</jacoco.check.branch.coverage>
   </properties>
   <build>
     <plugins>
