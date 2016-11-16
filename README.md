@@ -9,8 +9,8 @@ Metrics HTTP Sink
     <img src="https://travis-ci.org/ArpNetworking/metrics-sink-http-apache.png?branch=master"
          alt="Travis Build">
 </a>
-<a href="http://search.maven.org/#search%7Cga%7C1%7Cg%3A%22com.arpnetworking.metrics%22%20a%3A%22metrics-sink-http-apache%22">
-    <img src="https://img.shields.io/maven-central/v/com.arpnetworking.metrics/metrics-sink-http-apache.svg"
+<a href="http://search.maven.org/#search%7Cga%7C1%7Cg%3A%22com.arpnetworking.metrics%22%20a%3A%22sink-http-apache%22">
+    <img src="https://img.shields.io/maven-central/v/com.arpnetworking.metrics/sink-http-apache.svg"
          alt="Maven Artifact">
 </a>
 
@@ -21,7 +21,7 @@ Usage
 
 ### Add Dependency
 
-Determine the latest version of the library in [Maven Central](http://search.maven.org/#search%7Cga%7C1%7Cg%3A%22com.arpnetworking.metrics%22%20a%3A%22metrics-sink-http-apache%22).
+Determine the latest version of the library in [Maven Central](http://search.maven.org/#search%7Cga%7C1%7Cg%3A%22com.arpnetworking.metrics%22%20a%3A%22sink-http-apache%22).
 
 #### Maven
 
@@ -30,7 +30,7 @@ Add a dependency to your pom:
 ```xml
 <dependency>
     <groupId>com.arpnetworking.metrics</groupId>
-    <artifactId>metrics-sink-http-apache</artifactId>
+    <artifactId>sink-http-apache</artifactId>
     <version>VERSION</version>
 </dependency>
 ```
