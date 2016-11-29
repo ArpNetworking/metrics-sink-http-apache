@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!--
-  ~ Copyright 2015 Groupon.com
+  ~ Copyright 2016 Inscope Metrics Inc.
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
   ~ you may not use this file except in compliance with the License.
@@ -18,16 +18,16 @@
   <parent>
     <groupId>com.arpnetworking.build</groupId>
     <artifactId>arpnetworking-parent-pom</artifactId>
-    <version>1.0.27</version>
+    <version>1.0.28</version>
     <relativePath />
   </parent>
 
   <modelVersion>4.0.0</modelVersion>
-  <groupId>com.arpnetworking.metrics</groupId>
-  <artifactId>sink-http-apache</artifactId>
+  <groupId>com.arpnetworking.metrics.extras</groupId>
+  <artifactId>apache-http-sink-extra</artifactId>
   <packaging>jar</packaging>
-  <name>HTTP Sink Apache</name>
-  <description>HTTP Sink for metrics client using the Apache HTTP library.</description>
+  <name>Apache HTTP Sink</name>
+  <description>Apache HTTP sink for metrics client.</description>
   <url>https://github.com/ArpNetworking/metrics-sink-http-apache</url>
   <version>0.1.2-SNAPSHOT</version>
 
@@ -48,35 +48,41 @@
         <role>developer</role>
       </roles>
     </developer>
+    <developer>
+      <id>villekoskela</id>
+      <email>ville.koskela@inscopemetrics.com</email>
+      <organization>Inscope Metrics</organization>
+      <organizationUrl>http://www.inscopemetrics.com</organizationUrl>
+      <roles>
+        <role>developer</role>
+      </roles>
+    </developer>
   </developers>
 
   <scm>
-    <connection>scm:git:git@github.com:arpnetworking/metrics-sink-http-apache.git</connection>
-    <developerConnection>scm:git:git@github.com:arpnetworking/metrics-sink-http-apache.git</developerConnection>
-    <url>https://github.com/arpnetworking/metrics-sink-http-apache</url>
+    <connection>scm:git:git@github.com:arpnetworking/metrics-apache-http-sink-extra.git</connection>
+    <developerConnection>scm:git:git@github.com:arpnetworking/metrics-apache-http-sink-extra.git</developerConnection>
+    <url>https://github.com/arpnetworking/metrics-apache-http-sink-extra</url>
     <tag>HEAD</tag>
   </scm>
 
   <properties>
     <!--Dependency versions-->
-    <client.protocol.version>0.9.3</client.protocol.version>
-    <hamcrest.version>2.0.0.0</hamcrest.version>
-    <junit.version>4.12</junit.version>
-    <metrics.client.version>0.4.5</metrics.client.version>
-    <mockito.version>1.10.19</mockito.version>
-    <slf4j.version>1.7.12</slf4j.version>
     <apache.http.client.version>4.5.2</apache.http.client.version>
     <apache.http.core.version>4.4.4</apache.http.core.version>
-    <wiremock.version>1.57</wiremock.version>
+    <client.protocol.version>0.9.3</client.protocol.version>
+    <hamcrest.version>2.0.0.0</hamcrest.version>
     <jsr305.version>3.0.1</jsr305.version>
+    <junit.version>4.12</junit.version>
+    <metrics.client.version>0.5.0</metrics.client.version>
+    <mockito.version>1.10.19</mockito.version>
     <protobuf.version>3.0.0</protobuf.version>
-
-    <!-- Findbugs -->
-    <findbugs.exclude>${project.basedir}/findbugs.exclude.xml</findbugs.exclude>
+    <slf4j.version>1.7.12</slf4j.version>
+    <wiremock.version>2.3.1</wiremock.version>
 
     <!-- Code Coverage -->
     <jacoco.check.line.coverage>0.95</jacoco.check.line.coverage>
-    <jacoco.check.branch.coverage>0.91</jacoco.check.branch.coverage>
+    <jacoco.check.branch.coverage>0.90</jacoco.check.branch.coverage>
   </properties>
   <build>
     <plugins>
@@ -141,7 +147,7 @@
       <artifactId>httpcore</artifactId>
       <version>${apache.http.core.version}</version>
     </dependency>
-    <!-- Test - General -->
+    <!-- Test -->
     <dependency>
       <groupId>org.hamcrest</groupId>
       <artifactId>java-hamcrest</artifactId>

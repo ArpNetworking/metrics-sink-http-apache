@@ -13,20 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.arpnetworking.metrics.impl;
 
 import com.arpnetworking.metrics.Quantity;
 import com.arpnetworking.metrics.Sink;
 import com.arpnetworking.metrics.Units;
-import com.github.tomakehurst.wiremock.WireMockServer;
-import com.github.tomakehurst.wiremock.client.RequestPatternBuilder;
 import com.github.tomakehurst.wiremock.client.WireMock;
-import org.junit.After;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.junit.WireMockRule;
+import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder;
 import org.junit.Assert;
-import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
+import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -36,62 +37,63 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Tests for {@link ApacheHttpSink}.
  *
  * @author Brandon Arp (brandon dot arp at inscopemetrics dot com)
  */
-public class ApacheHttpSinkTest {
-    @Before
-    public void setUp() {
-        _wireMockServer = new WireMockServer(0);
-        _wireMockServer.start();
-        _wireMock = new WireMock(_wireMockServer.port());
-    }
-
-    @After
-    public void tearDown() {
-        _wireMockServer.stop();
-    }
+public final class ApacheHttpSinkTest {
 
     @Test
-    public void builderWithDefaults() {
+    public void testBuilderWithDefaults() {
         final Sink sink = new ApacheHttpSink.Builder().build();
         Assert.assertNotNull(sink);
         Assert.assertEquals(ApacheHttpSink.class, sink.getClass());
     }
 
     @Test
-    public void builderWithNulls() {
+    public void testBuilderWithNulls() {
         final ApacheHttpSink.Builder builder = new ApacheHttpSink.Builder();
         builder.setBufferSize(null);
         builder.setParallelism(null);
         builder.setUri(null);
         builder.setMaxBatchSize(null);
-        builder.setEmptyQueueSleepMillis(null);
+        builder.setEmptyQueueInterval(null);
         final Sink sink = builder.build();
         Assert.assertNotNull(sink);
         Assert.assertEquals(ApacheHttpSink.class, sink.getClass());
     }
 
     @Test
-    public void builderWithInvalidUri() {
+    public void testBuilderWithHttpsUri() {
         final ApacheHttpSink.Builder builder = new ApacheHttpSink.Builder();
-        builder.setUri("not a uri");
+        builder.setUri(URI.create("https://secure.example.com"));
+        final Sink sink = builder.build();
+        Assert.assertNotNull(sink);
+        Assert.assertEquals(ApacheHttpSink.class, sink.getClass());
+    }
+
+    @Test
+    public void testBuilderWithNotHttpUri() {
+        final ApacheHttpSink.Builder builder = new ApacheHttpSink.Builder();
+        builder.setUri(URI.create("ftp://ftp.example.com"));
         final Sink sink = builder.build();
         Assert.assertNotNull(sink);
         Assert.assertNotEquals(ApacheHttpSink.class, sink.getClass());
     }
 
     @Test
-    public void postSuccess() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testPostSuccess() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .build();
+
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
         annotations.put("_start", Instant.now().minusMillis(812).atZone(ZoneId.of("UTC")).format(DateTimeFormatter.ISO_INSTANT));
@@ -100,33 +102,42 @@ public class ApacheHttpSinkTest {
         annotations.put("_service", "myservice");
         annotations.put("_cluster", "mycluster");
         annotations.put("_id", UUID.randomUUID().toString());
+
         final TsdEvent event = new TsdEvent(
                 annotations,
                 createQuantityMap("timer", TsdQuantity.newInstance(123, Units.NANOSECOND)),
                 createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("gauge", TsdQuantity.newInstance(10, Units.BYTE)));
+
         sink.record(event);
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(1, requestPattern);
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
     }
 
     @Test
-    public void compoundUnits() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testCompoundUnits() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .build();
+
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
+
         final TsdEvent event = new TsdEvent(
                 annotations,
                 createQuantityMap("timer", TsdQuantity.newInstance(123, Units.NANOSECOND),
@@ -139,228 +150,296 @@ public class ApacheHttpSinkTest {
                         "hdd_c", TsdQuantity.newInstance(40, Units.CELSIUS),
                         "hdd_k", TsdQuantity.newInstance(400, Units.KELVIN),
                         "hdd_f", TsdQuantity.newInstance(100, Units.FAHRENHEIT)));
+
         sink.record(event);
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(1, requestPattern);
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
     }
 
     @Test
-    public void noUnits() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testNoUnits() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .build();
+
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
+
         final TsdEvent event = new TsdEvent(
                 annotations,
                 createQuantityMap("timer", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("gauge", TsdQuantity.newInstance(8, null)));
+
         sink.record(event);
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(1, requestPattern);
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
     }
 
     @Test
-    public void batchesRequests() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testBatchesRequests() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .setMaxBatchSize(10)
                 .setParallelism(1)
-                .setEmptyQueueSleepMillis(1000)
+                .setEmptyQueueInterval(Duration.ofMillis(1000))
                 .build();
+
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
+
         final TsdEvent event = new TsdEvent(
                 annotations,
                 createQuantityMap("timer", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("gauge", TsdQuantity.newInstance(8, null)));
+
+        // TODO(ville): This is trying to synchronize the two sleeps - WTF.
+        // This use case is likely best served with a sleeper much like in MAD.
         Thread.sleep(500);
         for (int x = 0; x < 3; x++) {
             sink.record(event);
         }
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(1, requestPattern);
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
     }
 
     @Test
-    public void batchesRequestsRespectsMax() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testBatchesRequestsRespectsMax() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .setMaxBatchSize(2)
                 .setParallelism(1)
-                .setEmptyQueueSleepMillis(1000)
+                .setEmptyQueueInterval(Duration.ofMillis(1000))
                 .build();
+
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
+
         final TsdEvent event = new TsdEvent(
                 annotations,
                 createQuantityMap("timer", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("gauge", TsdQuantity.newInstance(8, null)));
+
+        // TODO(ville): This is trying to synchronize the two sleeps - WTF.
+        // This use case is likely best served with a sleeper much like in MAD.
         Thread.sleep(500);
         for (int x = 0; x < 5; x++) {
             sink.record(event);
         }
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(3, requestPattern);
+        _wireMockRule.verify(3, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
     }
 
     @Test
-    public void respectsBufferMax() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testRespectsBufferMax() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .setMaxBatchSize(2)
                 .setParallelism(1)
                 .setBufferSize(5)
-                .setEmptyQueueSleepMillis(1000)
+                .setEmptyQueueInterval(Duration.ofMillis(1000))
                 .build();
+
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
+
         final TsdEvent event = new TsdEvent(
                 annotations,
                 createQuantityMap("timer", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
                 createQuantityMap("gauge", TsdQuantity.newInstance(8, null)));
+
+        // TODO(ville): This is trying to synchronize the two sleeps - WTF.
+        // This use case is likely best served with a sleeper much like in MAD.
         Thread.sleep(500);
         for (int x = 0; x < 10; x++) {
             sink.record(event);
         }
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(3, requestPattern);
+        _wireMockRule.verify(3, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
     }
 
     @Test
-    public void customUnit() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testCustomUnit() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .build();
+
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
+
         final TsdEvent event = new TsdEvent(
                 annotations,
                 createQuantityMap("timer", TsdQuantity.newInstance(8, () -> "Foo")),
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
                 TEST_EMPTY_SERIALIZATION_GAUGES);
+
         sink.record(event);
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(1, requestPattern);
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
     }
 
     @Test
-    public void unsupportedBaseUnit() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testUnsupportedBaseUnit() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .build();
+
         final Map<String, String> annotations = new LinkedHashMap<>();
         annotations.put("foo", "bar");
+
         final TsdEvent event = new TsdEvent(
                 annotations,
                 createQuantityMap("timer", TsdQuantity.newInstance(8, Units.ROTATION)),
                 createQuantityMap("counter", TsdQuantity.newInstance(8, Units.ROTATION)),
                 createQuantityMap("gauge", TsdQuantity.newInstance(8, Units.ROTATION)));
+
         sink.record(event);
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(1, requestPattern);
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
     }
 
     @Test
-    public void postFailure() throws InterruptedException {
-        _wireMock.register(WireMock.post(WireMock.urlEqualTo(PATH))
+    public void testPostFailure() throws InterruptedException {
+        _wireMockRule.stubFor(WireMock.post(WireMock.urlEqualTo(PATH))
                 .willReturn(WireMock.aResponse()
                         .withStatus(400)));
+
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://localhost:" + _wireMockServer.port() + PATH)
+                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .build();
+
         final TsdEvent event = new TsdEvent(
                 ANNOTATIONS,
                 TEST_EMPTY_SERIALIZATION_TIMERS,
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
                 TEST_EMPTY_SERIALIZATION_GAUGES);
+
         sink.record(event);
 
+        // TODO(ville): Replace this with a trigger, logical logic, etc.
         Thread.sleep(1000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
                 .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
 
+        //TODO(ville): Actually assert that the expected data was sent.
+
         // Assert that data was sent
-        _wireMock.verifyThat(1, requestPattern);
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
+
+        //TODO(ville): Actually assert that the failure was handled; e.g. log event.
     }
 
     @Test
-    public void postBadHost() throws InterruptedException {
+    public void testPostBadHost() throws InterruptedException {
         final Sink sink = new ApacheHttpSink.Builder()
-                .setUri("http://nohost.example.com" + PATH)
+                .setUri(URI.create("http://nohost.example.com" + PATH))
                 .build();
         final TsdEvent event = new TsdEvent(
                 ANNOTATIONS,
@@ -368,17 +447,30 @@ public class ApacheHttpSinkTest {
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
                 TEST_EMPTY_SERIALIZATION_GAUGES);
         sink.record(event);
+
+        // TODO(ville): There should be some record of failure; we should assert that.
+        // So with retries the bad request would go around a few times and then get
+        // dropped. When it does an injected logger should spout a warning. That's the
+        // only effect we have of this case executing properly, and we should assert
+        // that (much as we do in the metrics client java).
     }
 
     @Test
-    public void doesntInterrupt() throws InterruptedException {
-        final Thread thread = new Thread(() -> ApacheHttpSink.uninterruptableSleep(30000));
-        thread.start();
+    public void testSafeSleep() throws InterruptedException {
+        final AtomicBoolean value = new AtomicBoolean(false);
+        final Thread thread = new Thread(() -> {
+            // Value will not be set if safe sleep throws or is not interrupted.
+            ApacheHttpSink.safeSleep(500);
+            value.set(true);
+        });
 
+        thread.start();
         Thread.sleep(100);
         thread.interrupt();
-        thread.join(5000);
+        thread.join(600);
+
         Assert.assertFalse(thread.isAlive());
+        Assert.assertTrue(value.get());
     }
 
     private static Map<String, List<Quantity>> createQuantityMap(final Object... arguments) {
@@ -391,17 +483,20 @@ public class ApacheHttpSinkTest {
                 samples = new ArrayList<>();
                 map.put((String) argument, samples);
             } else if (argument instanceof Quantity) {
-                assert samples != null : "first argument must be metric name";
+                if (samples == null) {
+                    throw new RuntimeException("First argument must be metric name");
+                }
                 samples.add((Quantity) argument);
             } else {
-                assert false : "unsupported argument type: " + argument.getClass();
+                throw new RuntimeException("Unsupported argument type: " + argument.getClass());
             }
         }
         return map;
     }
 
-    private WireMockServer _wireMockServer;
-    private WireMock _wireMock;
+    @Rule
+    public WireMockRule _wireMockRule = new WireMockRule(
+            WireMockConfiguration.wireMockConfig().dynamicPort());
 
     private static final String PATH = "/metrics/v1/application";
     private static final Map<String, String> ANNOTATIONS = new LinkedHashMap<>();
