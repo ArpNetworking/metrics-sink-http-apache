@@ -155,7 +155,8 @@ public final class ApacheHttpSinkTest {
         sink.record(event);
 
         // TODO(ville): Replace this with a trigger, logical logic, etc.
-        Thread.sleep(1000);
+        // NOTE: This had to be increased because the connection is now established in parallel
+        Thread.sleep(3000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -190,7 +191,8 @@ public final class ApacheHttpSinkTest {
         sink.record(event);
 
         // TODO(ville): Replace this with a trigger, logical logic, etc.
-        Thread.sleep(1000);
+        // NOTE: This had to be increased because the connection is now established in parallel
+        Thread.sleep(3000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -233,7 +235,8 @@ public final class ApacheHttpSinkTest {
         }
 
         // TODO(ville): Replace this with a trigger, logical logic, etc.
-        Thread.sleep(1000);
+        // NOTE: This had to be increased because the connection is now established in parallel
+        Thread.sleep(3000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -276,7 +279,8 @@ public final class ApacheHttpSinkTest {
         }
 
         // TODO(ville): Replace this with a trigger, logical logic, etc.
-        Thread.sleep(1000);
+        // NOTE: This had to be increased because the connection is now established in parallel
+        Thread.sleep(3000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -320,7 +324,8 @@ public final class ApacheHttpSinkTest {
         }
 
         // TODO(ville): Replace this with a trigger, logical logic, etc.
-        Thread.sleep(1000);
+        // NOTE: This had to be increased because the connection is now established in parallel
+        Thread.sleep(3000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -355,7 +360,8 @@ public final class ApacheHttpSinkTest {
         sink.record(event);
 
         // TODO(ville): Replace this with a trigger, logical logic, etc.
-        Thread.sleep(1000);
+        // NOTE: This had to be increased because the connection is now established in parallel
+        Thread.sleep(3000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -390,7 +396,8 @@ public final class ApacheHttpSinkTest {
         sink.record(event);
 
         // TODO(ville): Replace this with a trigger, logical logic, etc.
-        Thread.sleep(1000);
+        // NOTE: This had to be increased because the connection is now established in parallel
+        Thread.sleep(3000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -422,7 +429,8 @@ public final class ApacheHttpSinkTest {
         sink.record(event);
 
         // TODO(ville): Replace this with a trigger, logical logic, etc.
-        Thread.sleep(1000);
+        // NOTE: This had to be increased because the connection is now established in parallel
+        Thread.sleep(3000);
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
