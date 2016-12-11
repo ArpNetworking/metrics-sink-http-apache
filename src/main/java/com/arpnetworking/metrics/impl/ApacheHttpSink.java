@@ -39,6 +39,7 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -90,29 +91,26 @@ public final class ApacheHttpSink implements Sink {
 
         final ExecutorService executor = Executors.newFixedThreadPool(
                 builder._parallelism,
-                (runnable) -> new Thread(runnable, "ApacheHttpSinkWorker"));
+                (runnable) -> new Thread(runnable, "MetricsSinkApacheHttpWorker"));
+
+        Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(this._isRunning, executor));
 
         final PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
         connectionManager.setDefaultMaxPerRoute(builder._parallelism);
         connectionManager.setMaxTotal(builder._parallelism);
 
-        _httpClient = HttpClients.custom()
-                .setConnectionManager(connectionManager)
-                .build();
-
-        for (int i = 0; i < builder._parallelism; i++) {
-            executor.execute(new HttpDispatch());
+        // Use a single shared worker instance across the pool; see getSharedHttpClient
+        final HttpDispatch httpDispatchWorker = new HttpDispatch(connectionManager);
+        for (int i = 0; i < builder._parallelism; ++i) {
+            executor.execute(httpDispatchWorker);
         }
-
-        Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(this._isRunning));
     }
 
     private final URI _uri;
     private final int _bufferSize;
     private final int _maxBatchSize;
     private final Duration _emptyQueueInterval;
-    private final CloseableHttpClient _httpClient;
-    private final ConcurrentLinkedDeque<Event> _events = new ConcurrentLinkedDeque<>();
+    private final Deque<Event> _events = new ConcurrentLinkedDeque<>();
     private final AtomicInteger _eventsCount = new AtomicInteger(0);
     private final AtomicBoolean _isRunning = new AtomicBoolean(true);
 
@@ -121,8 +119,13 @@ public final class ApacheHttpSink implements Sink {
 
     private final class HttpDispatch implements Runnable {
 
+        /* package private */ HttpDispatch(final PoolingHttpClientConnectionManager connectionManager) {
+            _connectionManager = connectionManager;
+        }
+
         @Override
         public void run() {
+            final CloseableHttpClient httpClient = getSharedHttpClient();
             while (_isRunning.get()) {
                 // Collect a set of events to send
                 // NOTE: This also builds the serialization types in order to spend more time
@@ -143,7 +146,7 @@ public final class ApacheHttpSink implements Sink {
                 } while (collected < _maxBatchSize);
 
                 if (collected > 0) {
-                    dispatchRequest(requestBuilder.build());
+                    dispatchRequest(httpClient, requestBuilder.build());
                 }
 
                 // Sleep if the queue is empty
@@ -153,7 +156,7 @@ public final class ApacheHttpSink implements Sink {
             }
         }
 
-        private void dispatchRequest(final ClientV1.RecordSet recordSet) {
+        private void dispatchRequest(final CloseableHttpClient httpClient, final ClientV1.RecordSet recordSet) {
             final HttpPost post = new HttpPost(_uri);
 
             post.setHeader(CONTENT_TYPE_HEADER);
@@ -164,7 +167,7 @@ public final class ApacheHttpSink implements Sink {
             // or else be requeued at the front of the existing queue (unless
             // it's full). The data will need to be wrapped with an attempt
             // count.
-            try (final CloseableHttpResponse response = _httpClient.execute(post)) {
+            try (final CloseableHttpResponse response = httpClient.execute(post)) {
                 final int statusCode = response.getStatusLine().getStatusCode();
                 if ((statusCode / 100) != 2) {
                     LOGGER.error(
@@ -309,18 +312,38 @@ public final class ApacheHttpSink implements Sink {
 
             return builder.build();
         }
+
+        private synchronized CloseableHttpClient getSharedHttpClient() {
+            // Defer construction of the http client to the worker threads to
+            // ensure that the thread constructing the sink is not blocked.
+            // This method is thread safe to ensure only a single instance is
+            // constructed for the worker pool.
+            if (_httpClient == null) {
+                _httpClient = HttpClients.custom()
+                        .setConnectionManager(_connectionManager)
+                        .build();
+            }
+            return _httpClient;
+        }
+
+        private final PoolingHttpClientConnectionManager _connectionManager;
+        private CloseableHttpClient _httpClient;
     }
 
     private static final class ShutdownHookThread extends Thread {
-        private final AtomicBoolean _isRunning;
 
-        ShutdownHookThread(final AtomicBoolean isRunning) {
-            this._isRunning = isRunning;
+        ShutdownHookThread(final AtomicBoolean isRunning, final ExecutorService executor) {
+            _isRunning = isRunning;
+            _executor = executor;
         }
 
         public void run() {
             _isRunning.set(false);
+            _executor.shutdown();
         }
+
+        private final AtomicBoolean _isRunning;
+        private final ExecutorService _executor;
     }
 
     /**
