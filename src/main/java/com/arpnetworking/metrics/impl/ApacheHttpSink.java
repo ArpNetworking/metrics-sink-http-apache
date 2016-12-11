@@ -67,9 +67,10 @@ public final class ApacheHttpSink implements Sink {
         _events.push(event);
         final int events = _eventsCount.incrementAndGet();
         if (events > _bufferSize) {
-            //TODO(ville): Log when dropping items
             //TODO(ville): Drop multiple items when full
             //TODO(ville): Configure the number of items to drop when full
+            _eventsDroppedLogger.getLogger().warn(
+                    "Event queue is full; dropping event(s)");
             _events.pollFirst();
             _eventsCount.decrementAndGet();
         }
@@ -88,6 +89,10 @@ public final class ApacheHttpSink implements Sink {
         _bufferSize = builder._bufferSize;
         _maxBatchSize = builder._maxBatchSize;
         _emptyQueueInterval = builder._emptyQueueInterval;
+        _eventsDroppedLogger = new RateLimitedLogger(
+                "EventsDroppedLogger",
+                LOGGER,
+                builder._eventsDroppedLoggingInterval);
 
         final ExecutorService executor = Executors.newFixedThreadPool(
                 builder._parallelism,
@@ -100,7 +105,9 @@ public final class ApacheHttpSink implements Sink {
         connectionManager.setMaxTotal(builder._parallelism);
 
         // Use a single shared worker instance across the pool; see getSharedHttpClient
-        final HttpDispatch httpDispatchWorker = new HttpDispatch(connectionManager);
+        final HttpDispatch httpDispatchWorker = new HttpDispatch(
+                connectionManager,
+                builder._eventsDroppedLoggingInterval);
         for (int i = 0; i < builder._parallelism; ++i) {
             executor.execute(httpDispatchWorker);
         }
@@ -110,6 +117,7 @@ public final class ApacheHttpSink implements Sink {
     private final int _bufferSize;
     private final int _maxBatchSize;
     private final Duration _emptyQueueInterval;
+    private final RateLimitedLogger _eventsDroppedLogger;
     private final Deque<Event> _events = new ConcurrentLinkedDeque<>();
     private final AtomicInteger _eventsCount = new AtomicInteger(0);
     private final AtomicBoolean _isRunning = new AtomicBoolean(true);
@@ -119,8 +127,14 @@ public final class ApacheHttpSink implements Sink {
 
     private final class HttpDispatch implements Runnable {
 
-        /* package private */ HttpDispatch(final PoolingHttpClientConnectionManager connectionManager) {
-            _connectionManager = connectionManager;
+        /* package private */ HttpDispatch(
+                final PoolingHttpClientConnectionManager connectionManager,
+                final Duration dispatchErrorLoggingInterval) {
+                _connectionManager = connectionManager;
+             _dispatchErrorLogger = new RateLimitedLogger(
+                     "DispatchErrorLogger",
+                     LOGGER,
+                     dispatchErrorLoggingInterval);
         }
 
         @Override
@@ -170,13 +184,18 @@ public final class ApacheHttpSink implements Sink {
             try (final CloseableHttpResponse response = httpClient.execute(post)) {
                 final int statusCode = response.getStatusLine().getStatusCode();
                 if ((statusCode / 100) != 2) {
-                    LOGGER.error(
-                            String.format("Received non 200 response when sending metrics to HTTP endpoint; uri=%s, status=%s",
+                    _dispatchErrorLogger.getLogger().error(
+                            String.format(
+                                    "Received non 200 response when sending metrics to HTTP endpoint; uri=%s, status=%s",
                                     _uri,
                                     statusCode));
                 }
             } catch (final IOException e) {
-                LOGGER.error(String.format("Unable to send metrics to HTTP endpoint; uri=%s", _uri), e);
+                _dispatchErrorLogger.getLogger().error(
+                        String.format(
+                                "Unable to send metrics to HTTP endpoint; uri=%s",
+                                _uri),
+                        e);
             }
         }
 
@@ -327,16 +346,20 @@ public final class ApacheHttpSink implements Sink {
         }
 
         private final PoolingHttpClientConnectionManager _connectionManager;
+        private final RateLimitedLogger _dispatchErrorLogger;
         private CloseableHttpClient _httpClient;
     }
 
     private static final class ShutdownHookThread extends Thread {
 
-        ShutdownHookThread(final AtomicBoolean isRunning, final ExecutorService executor) {
-            _isRunning = isRunning;
+        /* package private */ ShutdownHookThread(
+                final AtomicBoolean isRunning,
+                final ExecutorService executor) {
+            this._isRunning = isRunning;
             _executor = executor;
         }
 
+        @Override
         public void run() {
             _isRunning.set(false);
             _executor.shutdown();
@@ -366,7 +389,8 @@ public final class ApacheHttpSink implements Sink {
         }
 
         /**
-         * Set the URI of the HTTP endpoint. Optional; default is "http://localhost:7090/metrics/v1/application".
+         * Set the URI of the HTTP endpoint. Optional; default is
+         * {@code http://localhost:7090/metrics/v1/application}.
          *
          * @param value The uri of the HTTP endpoint.
          * @return This {@link Builder} instance.
@@ -377,7 +401,8 @@ public final class ApacheHttpSink implements Sink {
         }
 
         /**
-         * Set the parallelism (threads and connections) that the sink will use. Optional; default is 5.
+         * Set the parallelism (threads and connections) that the sink will
+         * use. Optional; default is 5.
          *
          * @param value The uri of the HTTP endpoint.
          * @return This {@link Builder} instance.
@@ -388,8 +413,9 @@ public final class ApacheHttpSink implements Sink {
         }
 
         /**
-         * Set the empty queue interval. Each worker thread will independently sleep this long if the
-         * event queue is empty. Optional; default is 500 milliseconds.
+         * Set the empty queue interval. Each worker thread will independently
+         * sleep this long if the event queue is empty. Optional; default is
+         * 500 milliseconds.
          *
          * @param value The empty queue interval.
          * @return This {@link Builder} instance.
@@ -400,13 +426,38 @@ public final class ApacheHttpSink implements Sink {
         }
 
         /**
-         * Set the maximum batch size (records to send in each request). Optional; default is 500.
+         * Set the maximum batch size (records to send in each request).
+         * Optional; default is 500.
          *
          * @param value The maximum batch size.
          * @return This {@link Builder} instance.
          */
         public Builder setMaxBatchSize(@Nullable final Integer value) {
             _maxBatchSize = value;
+            return this;
+        }
+
+        /**
+         * Set the events dropped logging interval. Any event drop notices will
+         * be logged at most once per interval. Optional; default is 1 minute.
+         *
+         * @param value The logging interval.
+         * @return This {@link Builder} instance.
+         */
+        public Builder setEventsDroppedLoggingInteval(@Nullable final Duration value) {
+            _eventsDroppedLoggingInterval = value;
+            return this;
+        }
+
+        /**
+         * Set the dispatch error logging interval. Any dispatch errors will be
+         * logged at most once per interval. Optional; default is 1 minute.
+         *
+         * @param value The logging interval.
+         * @return This {@link Builder} instance.
+         */
+        public Builder setDispatchErrorLoggingInterval(@Nullable final Duration value) {
+            _dispatchErrorLoggingInterval = value;
             return this;
         }
 
@@ -438,23 +489,45 @@ public final class ApacheHttpSink implements Sink {
         private void applyDefaults() {
             if (_bufferSize == null) {
                 _bufferSize = DEFAULT_BUFFER_SIZE;
-                LOGGER.info(String.format("Defaulted null buffer size; bufferSize=%s", _bufferSize));
+                LOGGER.info(String.format(
+                        "Defaulted null buffer size; bufferSize=%s",
+                        _bufferSize));
             }
             if (_uri == null) {
                 _uri = DEFAULT_URI;
-                LOGGER.info(String.format("Defaulted null uri; uri=%s", _uri));
+                LOGGER.info(String.format(
+                        "Defaulted null uri; uri=%s",
+                        _uri));
             }
             if (_parallelism == null) {
                 _parallelism = DEFAULT_PARALLELISM;
-                LOGGER.info(String.format("Defaulted null parallelism; parallelism=%s", _parallelism));
+                LOGGER.info(String.format(
+                        "Defaulted null parallelism; parallelism=%s",
+                        _parallelism));
             }
             if (_maxBatchSize == null) {
                 _maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
-                LOGGER.info(String.format("Defaulted null max batch size; maxBatchSize=%s", _maxBatchSize));
+                LOGGER.info(String.format(
+                        "Defaulted null max batch size; maxBatchSize=%s",
+                        _maxBatchSize));
             }
             if (_emptyQueueInterval == null) {
                 _emptyQueueInterval = DEFAULT_EMPTY_QUEUE_INTERVAL;
-                LOGGER.info(String.format("Defaulted null empty queue interval; emptyQueueInterval=%s", _emptyQueueInterval));
+                LOGGER.info(String.format(
+                        "Defaulted null empty queue interval; emptyQueueInterval=%s",
+                        _emptyQueueInterval));
+            }
+            if (_eventsDroppedLoggingInterval == null) {
+                _eventsDroppedLoggingInterval = DEFAULT_EVENTS_DROPPED_LOGGING_INTERVAL;
+                LOGGER.info(String.format(
+                        "Defaulted null dispatch error logging interval; eventsDroppedLoggingInterval=%s",
+                        _eventsDroppedLoggingInterval));
+            }
+            if (_dispatchErrorLoggingInterval == null) {
+                _dispatchErrorLoggingInterval = DEFAULT_DISPATCH_ERROR_LOGGING_INTERVAL;
+                LOGGER.info(String.format(
+                        "Defaulted null dispatch error logging interval; dispatchErrorLoggingInterval=%s",
+                        _dispatchErrorLoggingInterval));
             }
         }
 
@@ -469,11 +542,15 @@ public final class ApacheHttpSink implements Sink {
         private Integer _parallelism = DEFAULT_PARALLELISM;
         private Integer _maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
         private Duration _emptyQueueInterval = DEFAULT_EMPTY_QUEUE_INTERVAL;
+        private Duration _eventsDroppedLoggingInterval = DEFAULT_EVENTS_DROPPED_LOGGING_INTERVAL;
+        private Duration _dispatchErrorLoggingInterval = DEFAULT_DISPATCH_ERROR_LOGGING_INTERVAL;
 
         private static final Integer DEFAULT_BUFFER_SIZE = 10000;
         private static final URI DEFAULT_URI = URI.create("http://localhost:7090/metrics/v1/application");
         private static final Integer DEFAULT_PARALLELISM = 2;
         private static final Integer DEFAULT_MAX_BATCH_SIZE = 500;
         private static final Duration DEFAULT_EMPTY_QUEUE_INTERVAL = Duration.ofMillis(500);
+        private static final Duration DEFAULT_EVENTS_DROPPED_LOGGING_INTERVAL = Duration.ofMinutes(1);
+        private static final Duration DEFAULT_DISPATCH_ERROR_LOGGING_INTERVAL = Duration.ofMinutes(1);
     }
 }

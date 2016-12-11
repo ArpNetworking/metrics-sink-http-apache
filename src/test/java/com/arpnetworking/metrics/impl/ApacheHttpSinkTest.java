@@ -61,6 +61,8 @@ public final class ApacheHttpSinkTest {
         builder.setUri(null);
         builder.setMaxBatchSize(null);
         builder.setEmptyQueueInterval(null);
+        builder.setDispatchErrorLoggingInterval(null);
+        builder.setEmptyQueueInterval(null);
         final Sink sink = builder.build();
         Assert.assertNotNull(sink);
         Assert.assertEquals(ApacheHttpSink.class, sink.getClass());
@@ -442,7 +444,7 @@ public final class ApacheHttpSinkTest {
         _wireMockRule.verify(1, requestPattern);
         Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
 
-        //TODO(ville): Actually assert that the failure was handled; e.g. log event.
+        //TODO(ville): Actually assert that the failure was handled; e.g. getLogger event.
     }
 
     @Test
