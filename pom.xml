@@ -90,6 +90,7 @@
     <!-- Dependency versions -->
     <apache.http.client.version>4.5.2</apache.http.client.version>
     <apache.http.core.version>4.4.5</apache.http.core.version>
+    <arpnetworking.commons.version>1.9.0</arpnetworking.commons.version>
     <client.protocol.version>0.9.3</client.protocol.version>
     <hamcrest.version>2.0.0.0</hamcrest.version>
     <jsr305.version>3.0.1</jsr305.version>
@@ -105,7 +106,7 @@
 
     <!-- Code Coverage -->
     <jacoco.check.line.coverage>0.95</jacoco.check.line.coverage>
-    <jacoco.check.branch.coverage>0.90</jacoco.check.branch.coverage>
+    <jacoco.check.branch.coverage>0.89</jacoco.check.branch.coverage>
   </properties>
   <build>
     <plugins>
@@ -241,6 +242,11 @@
       <groupId>com.arpnetworking.metrics</groupId>
       <artifactId>metrics-client</artifactId>
       <version>${metrics.client.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.arpnetworking.commons</groupId>
+      <artifactId>commons</artifactId>
+      <version>${arpnetworking.commons.version}</version>
     </dependency>
     <dependency>
       <groupId>com.google.code.findbugs</groupId>
