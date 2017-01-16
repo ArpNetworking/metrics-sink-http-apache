@@ -480,7 +480,9 @@ public final class ApacheHttpSink implements Sink {
                         "Unable to construct %s, sink disabled; failures=%s",
                         this.getClass().getEnclosingClass().getSimpleName(),
                         failures));
-                return new WarningSink(failures);
+                return new WarningSink.Builder()
+                        .setReasons(failures)
+                        .build();
             }
 
             return new ApacheHttpSink(this);

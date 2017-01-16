@@ -29,7 +29,7 @@
   <name>Apache HTTP Sink</name>
   <description>Apache HTTP sink for metrics client.</description>
   <url>https://github.com/ArpNetworking/metrics-sink-http-apache</url>
-  <version>0.1.2-SNAPSHOT</version>
+  <version>0.6.0-SNAPSHOT</version>
 
   <licenses>
     <license>
@@ -92,7 +92,7 @@
     <hamcrest.version>2.0.0.0</hamcrest.version>
     <jsr305.version>3.0.1</jsr305.version>
     <junit.version>4.12</junit.version>
-    <metrics.client.version>0.5.0</metrics.client.version>
+    <metrics.client.version>0.6.0</metrics.client.version>
     <mockito.version>1.10.19</mockito.version>
     <protobuf.version>3.1.0</protobuf.version>
     <slf4j.version>1.7.22</slf4j.version>
