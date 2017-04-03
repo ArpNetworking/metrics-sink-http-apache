@@ -59,9 +59,6 @@ import javax.annotation.Nullable;
  */
 public final class ApacheHttpSink implements Sink {
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public void record(final Event event) {
         _events.push(event);
