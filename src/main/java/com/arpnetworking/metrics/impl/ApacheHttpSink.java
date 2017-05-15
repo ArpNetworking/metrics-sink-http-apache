@@ -15,6 +15,7 @@
  */
 package com.arpnetworking.metrics.impl;
 
+import com.arpnetworking.commons.slf4j.RateLimitedLogger;
 import com.arpnetworking.metrics.CompoundUnit;
 import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Quantity;
