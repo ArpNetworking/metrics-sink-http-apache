@@ -50,6 +50,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongConsumer;
+import java.util.function.Supplier;
 import javax.annotation.Nullable;
 
 /**
@@ -98,13 +99,18 @@ public final class ApacheHttpSink implements Sink {
 
         Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(this._isRunning, executor));
 
-        final PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
-        connectionManager.setDefaultMaxPerRoute(builder._parallelism);
-        connectionManager.setMaxTotal(builder._parallelism);
+        // Delay connection manage construction so the constructor does not block
+        final Supplier<PoolingHttpClientConnectionManager> connectionManagerSupplier =
+                new SingletonSupplier<>(() -> {
+                    final PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
+                    connectionManager.setDefaultMaxPerRoute(builder._parallelism);
+                    connectionManager.setMaxTotal(builder._parallelism);
+                    return connectionManager;
+                });
 
         // Use a single shared worker instance across the pool; see getSharedHttpClient
         final HttpDispatch httpDispatchWorker = new HttpDispatch(
-                connectionManager,
+                connectionManagerSupplier,
                 builder._eventsDroppedLoggingInterval);
         for (int i = 0; i < builder._parallelism; ++i) {
             executor.execute(httpDispatchWorker);
@@ -123,10 +129,30 @@ public final class ApacheHttpSink implements Sink {
     private static final Header CONTENT_TYPE_HEADER = new BasicHeader(HttpHeaders.CONTENT_TYPE, "application/octet-stream");
     private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger(ApacheHttpSink.class);
 
+    /* package private */ static final class SingletonSupplier<T> implements Supplier<T> {
+
+        /* package private */ SingletonSupplier(final Supplier<T> supplier) {
+            _supplier = supplier;
+        }
+
+        @Override
+        public T get() {
+            if (_reference == null) {
+                synchronized (this) {
+                    _reference = _supplier.get();
+                }
+            }
+            return _reference;
+        }
+
+        private final Supplier<T> _supplier;
+        private volatile T _reference;
+    }
+
     private final class HttpDispatch implements Runnable {
 
         /* package private */ HttpDispatch(
-                final PoolingHttpClientConnectionManager connectionManager,
+                final Supplier<PoolingHttpClientConnectionManager> connectionManager,
                 final Duration dispatchErrorLoggingInterval) {
                 _connectionManager = connectionManager;
              _dispatchErrorLogger = new RateLimitedLogger(
@@ -337,13 +363,13 @@ public final class ApacheHttpSink implements Sink {
             // constructed for the worker pool.
             if (_httpClient == null) {
                 _httpClient = HttpClients.custom()
-                        .setConnectionManager(_connectionManager)
+                        .setConnectionManager(_connectionManager.get())
                         .build();
             }
             return _httpClient;
         }
 
-        private final PoolingHttpClientConnectionManager _connectionManager;
+        private final Supplier<PoolingHttpClientConnectionManager> _connectionManager;
         private final RateLimitedLogger _dispatchErrorLogger;
         private CloseableHttpClient _httpClient;
     }

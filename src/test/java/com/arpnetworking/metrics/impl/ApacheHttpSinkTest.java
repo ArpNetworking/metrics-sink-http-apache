@@ -38,6 +38,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 /**
  * Tests for {@link ApacheHttpSink}.
@@ -482,6 +484,20 @@ public final class ApacheHttpSinkTest {
 
         Assert.assertFalse(thread.isAlive());
         Assert.assertTrue(value.get());
+    }
+
+    @Test
+    public void testSingletonSupplier() {
+        final AtomicInteger expectedValue = new AtomicInteger(0);
+        final Supplier<AtomicInteger> supplier = new ApacheHttpSink.SingletonSupplier<>(() -> {
+            expectedValue.incrementAndGet();
+            return expectedValue;
+        });
+        Assert.assertEquals(0, expectedValue.get());
+        Assert.assertSame(expectedValue, supplier.get());
+        Assert.assertEquals(1, expectedValue.get());
+        Assert.assertSame(expectedValue, supplier.get());
+        Assert.assertEquals(1, expectedValue.get());
     }
 
     private static Map<String, List<Quantity>> createQuantityMap(final Object... arguments) {
