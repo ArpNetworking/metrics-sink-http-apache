@@ -20,6 +20,7 @@ import com.arpnetworking.metrics.CompoundUnit;
 import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Quantity;
 import com.arpnetworking.metrics.Sink;
+import com.arpnetworking.metrics.StopWatch;
 import com.arpnetworking.metrics.Unit;
 import com.google.protobuf.ByteString;
 import com.inscopemetrics.client.protocol.ClientV1;
@@ -43,6 +44,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutorService;
@@ -111,7 +113,8 @@ public final class ApacheHttpSink implements Sink {
         // Use a single shared worker instance across the pool; see getSharedHttpClient
         final HttpDispatch httpDispatchWorker = new HttpDispatch(
                 connectionManagerSupplier,
-                builder._eventsDroppedLoggingInterval);
+                builder._eventsDroppedLoggingInterval,
+                Optional.ofNullable(builder._eventHandler));
         for (int i = 0; i < builder._parallelism; ++i) {
             executor.execute(httpDispatchWorker);
         }
@@ -153,12 +156,14 @@ public final class ApacheHttpSink implements Sink {
 
         /* package private */ HttpDispatch(
                 final Supplier<PoolingHttpClientConnectionManager> connectionManager,
-                final Duration dispatchErrorLoggingInterval) {
-                _connectionManager = connectionManager;
-             _dispatchErrorLogger = new RateLimitedLogger(
-                     "DispatchErrorLogger",
-                     LOGGER,
-                     dispatchErrorLoggingInterval);
+                final Duration dispatchErrorLoggingInterval,
+                final Optional<ApacheHttpSinkEventHandler> eventHandler) {
+            _connectionManager = connectionManager;
+            _dispatchErrorLogger = new RateLimitedLogger(
+                    "DispatchErrorLogger",
+                    LOGGER,
+                    dispatchErrorLoggingInterval);
+            _eventHandler = eventHandler;
         }
 
         @Override
@@ -195,31 +200,44 @@ public final class ApacheHttpSink implements Sink {
         }
 
         private void dispatchRequest(final CloseableHttpClient httpClient, final ClientV1.RecordSet recordSet) {
+            final ByteArrayEntity entity = new ByteArrayEntity(recordSet.toByteArray());
             final HttpPost post = new HttpPost(_uri);
 
             post.setHeader(CONTENT_TYPE_HEADER);
-            post.setEntity(new ByteArrayEntity(recordSet.toByteArray()));
+            post.setEntity(entity);
 
             // TODO(ville): We need to add retries.
             // Requests that fail should either go into a different retry queue
             // or else be requeued at the front of the existing queue (unless
             // it's full). The data will need to be wrapped with an attempt
             // count.
+            final StopWatch stopWatch = StopWatch.start();
+            boolean success = false;
             try (final CloseableHttpResponse response = httpClient.execute(post)) {
                 final int statusCode = response.getStatusLine().getStatusCode();
                 if ((statusCode / 100) != 2) {
                     _dispatchErrorLogger.getLogger().error(
                             String.format(
-                                    "Received non 200 response when sending metrics to HTTP endpoint; uri=%s, status=%s",
+                                    "Received failure response when sending metrics to HTTP endpoint; uri=%s, status=%s",
                                     _uri,
                                     statusCode));
+                } else {
+                    success = true;
                 }
             } catch (final IOException e) {
                 _dispatchErrorLogger.getLogger().error(
                         String.format(
-                                "Unable to send metrics to HTTP endpoint; uri=%s",
+                                "Encountered failure when sending metrics to HTTP endpoint; uri=%s",
                                 _uri),
                         e);
+            }
+            stopWatch.stop();
+            if (_eventHandler.isPresent()) {
+                _eventHandler.get().attemptComplete(
+                        recordSet.getRecordsCount(),
+                        entity.getContentLength(),
+                        success,
+                        stopWatch.getElapsedTime());
             }
         }
 
@@ -371,6 +389,7 @@ public final class ApacheHttpSink implements Sink {
 
         private final Supplier<PoolingHttpClientConnectionManager> _connectionManager;
         private final RateLimitedLogger _dispatchErrorLogger;
+        private final Optional<ApacheHttpSinkEventHandler> _eventHandler;
         private CloseableHttpClient _httpClient;
     }
 
@@ -486,6 +505,18 @@ public final class ApacheHttpSink implements Sink {
         }
 
         /**
+         * Set the event handler. Optional; default is {@code null}.
+         *
+         * @param value The event handler.
+         * @return This {@link Builder} instance.
+         */
+        public Builder setEventHandler(@Nullable final ApacheHttpSinkEventHandler value) {
+            _eventHandler = value;
+            return this;
+        }
+
+
+        /**
          * Create an instance of {@link Sink}.
          *
          * @return Instance of {@link Sink}.
@@ -570,6 +601,8 @@ public final class ApacheHttpSink implements Sink {
         private Duration _emptyQueueInterval = DEFAULT_EMPTY_QUEUE_INTERVAL;
         private Duration _eventsDroppedLoggingInterval = DEFAULT_EVENTS_DROPPED_LOGGING_INTERVAL;
         private Duration _dispatchErrorLoggingInterval = DEFAULT_DISPATCH_ERROR_LOGGING_INTERVAL;
+        private @Nullable
+        ApacheHttpSinkEventHandler _eventHandler;
 
         private static final Integer DEFAULT_BUFFER_SIZE = 10000;
         private static final URI DEFAULT_URI = URI.create("http://localhost:7090/metrics/v1/application");

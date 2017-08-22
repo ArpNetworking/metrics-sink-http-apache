@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -94,8 +95,10 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
 
+        final Semaphore semaphore = new Semaphore(0);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final Map<String, String> annotations = new LinkedHashMap<>();
@@ -114,10 +117,7 @@ public final class ApacheHttpSinkTest {
                 createQuantityMap("gauge", TsdQuantity.newInstance(10, Units.BYTE)));
 
         sink.record(event);
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -136,8 +136,10 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
 
+        final Semaphore semaphore = new Semaphore(0);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final Map<String, String> annotations = new LinkedHashMap<>();
@@ -157,10 +159,7 @@ public final class ApacheHttpSinkTest {
                         "hdd_f", TsdQuantity.newInstance(100, Units.FAHRENHEIT)));
 
         sink.record(event);
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -179,8 +178,10 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
 
+        final Semaphore semaphore = new Semaphore(0);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final Map<String, String> annotations = new LinkedHashMap<>();
@@ -193,10 +194,7 @@ public final class ApacheHttpSinkTest {
                 createQuantityMap("gauge", TsdQuantity.newInstance(8, null)));
 
         sink.record(event);
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -215,11 +213,13 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
 
+        final Semaphore semaphore = new Semaphore(0);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .setMaxBatchSize(10)
                 .setParallelism(1)
                 .setEmptyQueueInterval(Duration.ofMillis(1000))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final Map<String, String> annotations = new LinkedHashMap<>();
@@ -237,10 +237,7 @@ public final class ApacheHttpSinkTest {
         for (int x = 0; x < 3; x++) {
             sink.record(event);
         }
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -259,11 +256,13 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
 
+        final Semaphore semaphore = new Semaphore(-2);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .setMaxBatchSize(2)
                 .setParallelism(1)
                 .setEmptyQueueInterval(Duration.ofMillis(1000))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final Map<String, String> annotations = new LinkedHashMap<>();
@@ -281,10 +280,7 @@ public final class ApacheHttpSinkTest {
         for (int x = 0; x < 5; x++) {
             sink.record(event);
         }
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -303,12 +299,14 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
 
+        final Semaphore semaphore = new Semaphore(-2);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
                 .setMaxBatchSize(2)
                 .setParallelism(1)
                 .setBufferSize(5)
                 .setEmptyQueueInterval(Duration.ofMillis(1000))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final Map<String, String> annotations = new LinkedHashMap<>();
@@ -326,10 +324,7 @@ public final class ApacheHttpSinkTest {
         for (int x = 0; x < 10; x++) {
             sink.record(event);
         }
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -348,8 +343,10 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
 
+        final Semaphore semaphore = new Semaphore(0);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final Map<String, String> annotations = new LinkedHashMap<>();
@@ -362,10 +359,7 @@ public final class ApacheHttpSinkTest {
                 TEST_EMPTY_SERIALIZATION_GAUGES);
 
         sink.record(event);
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -384,8 +378,10 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(200)));
 
+        final Semaphore semaphore = new Semaphore(0);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final Map<String, String> annotations = new LinkedHashMap<>();
@@ -398,10 +394,7 @@ public final class ApacheHttpSinkTest {
                 createQuantityMap("gauge", TsdQuantity.newInstance(8, Units.ROTATION)));
 
         sink.record(event);
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -420,8 +413,10 @@ public final class ApacheHttpSinkTest {
                 .willReturn(WireMock.aResponse()
                         .withStatus(400)));
 
+        final Semaphore semaphore = new Semaphore(0);
         final Sink sink = new ApacheHttpSink.Builder()
                 .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                .setEventHandler((records, bytes, success, elapasedTime) -> semaphore.release())
                 .build();
 
         final TsdEvent event = new TsdEvent(
@@ -431,10 +426,7 @@ public final class ApacheHttpSinkTest {
                 TEST_EMPTY_SERIALIZATION_GAUGES);
 
         sink.record(event);
-
-        // TODO(ville): Replace this with a trigger, logical logic, etc.
-        // NOTE: This had to be increased because the connection is now established in parallel
-        Thread.sleep(3000);
+        semaphore.acquire();
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
