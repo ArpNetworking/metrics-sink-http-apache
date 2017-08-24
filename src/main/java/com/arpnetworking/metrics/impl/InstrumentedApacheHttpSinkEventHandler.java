@@ -19,11 +19,13 @@ import com.arpnetworking.metrics.Metrics;
 import com.arpnetworking.metrics.MetricsFactory;
 import com.arpnetworking.metrics.Quantity;
 
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
 
 /**
  * Implementation of {@link ApacheHttpSinkEventHandler} which emits metrics
@@ -46,16 +48,18 @@ public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpS
             final Quantity elapasedTime) {
         try {
             _readWriteLock.readLock().lock();
-            _metrics.incrementCounter("metrics_client/apache_http_sink/records", records);
-            _metrics.incrementCounter("metrics_client/apache_http_sink/bytes", bytes);
-            _metrics.resetCounter("metrics_client/apache_http_sink/success_rate");
-            if (success) {
-                _metrics.incrementCounter("metrics_client/apache_http_sink/success_rate");
+            if (_metrics != null) {
+                _metrics.incrementCounter("metrics_client/apache_http_sink/records", records);
+                _metrics.incrementCounter("metrics_client/apache_http_sink/bytes", bytes);
+                _metrics.resetCounter("metrics_client/apache_http_sink/success_rate");
+                if (success) {
+                    _metrics.incrementCounter("metrics_client/apache_http_sink/success_rate");
+                }
+                _metrics.setTimer(
+                        "metrics_client/apache_http_sink/latency",
+                        elapasedTime.getValue().longValue(),
+                        elapasedTime.getUnit());
             }
-            _metrics.setTimer(
-                    "metrics_client/apache_http_sink/latency",
-                    elapasedTime.getValue().longValue(),
-                    elapasedTime.getUnit());
         } finally {
             _readWriteLock.readLock().unlock();
         }
@@ -64,24 +68,30 @@ public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpS
     /**
      * Public constructor.
      *
-     * @param metricsFactory the {@link MetricsFactory} instance.
+     * @param metricsFactorySupplier {@code Supplier} that provides
+     * {@code Optional} {@link MetricsFactory} instance. Decouples the
+     * circular reference between this event handler and the metrics factory.
      */
-    public InstrumentedApacheHttpSinkEventHandler(final MetricsFactory metricsFactory) {
-        _metricsFactory = metricsFactory;
-        _metrics = _metricsFactory.create();
+    public InstrumentedApacheHttpSinkEventHandler(final Supplier<Optional<MetricsFactory>> metricsFactorySupplier) {
+        _metricsFactorySupplier = metricsFactorySupplier;
+        _metrics = _metricsFactorySupplier.get().map(MetricsFactory::create).orElse(null);
         _executorService.scheduleAtFixedRate(
                 new Runnable() {
                     @Override
                     public void run() {
-                        final Metrics metrics;
-                        try {
-                            _readWriteLock.writeLock().lock();
-                            metrics = _metrics;
-                            _metrics = _metricsFactory.create();
-                        } finally {
-                            _readWriteLock.writeLock().unlock();
+                        if (_metrics != null) {
+                            final Metrics metrics;
+                            try {
+                                _readWriteLock.writeLock().lock();
+                                metrics = _metrics;
+                                _metrics = _metricsFactorySupplier.get().map(MetricsFactory::create).orElse(null);
+                            } finally {
+                                _readWriteLock.writeLock().unlock();
+                            }
+                            metrics.close();
+                        } else {
+                            _metrics = _metricsFactorySupplier.get().map(MetricsFactory::create).orElse(null);
                         }
-                        metrics.close();
                     }
                 },
                 DELAY_IN_MILLISECONDS,
@@ -89,7 +99,7 @@ public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpS
                 TimeUnit.MILLISECONDS);
     }
 
-    private final MetricsFactory _metricsFactory;
+    private final Supplier<Optional<MetricsFactory>> _metricsFactorySupplier;
     private final ScheduledExecutorService _executorService = Executors.newSingleThreadScheduledExecutor(
             runnable -> new Thread(runnable, "MetricsSinkApacheHttpInstrumention"));
 
