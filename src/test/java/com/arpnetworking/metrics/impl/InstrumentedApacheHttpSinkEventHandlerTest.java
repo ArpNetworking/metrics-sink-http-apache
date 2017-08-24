@@ -21,6 +21,7 @@ import com.arpnetworking.metrics.Units;
 import org.junit.Test;
 import org.mockito.Mockito;
 
+import java.util.Optional;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -50,7 +51,8 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
             }
         }).when(metricsFactory).create();
 
-        final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(metricsFactory);
+        final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(
+                () -> Optional.of(metricsFactory));
         eventHandler.attemptComplete(1, 2, true, TsdQuantity.newInstance(123, Units.NANOSECOND));
         eventHandler.attemptComplete(3, 4, false, TsdQuantity.newInstance(246, Units.NANOSECOND));
         semaphore.acquire();
@@ -63,6 +65,39 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
         Mockito.verify(metricsA, Mockito.times(2)).resetCounter("metrics_client/apache_http_sink/success_rate");
         Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/success_rate");
         Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 123, Units.NANOSECOND);
+        Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 246, Units.NANOSECOND);
+        Mockito.verify(metricsA).close();
+        Mockito.verifyNoMoreInteractions(metricsA);
+    }
+
+    @Test
+    public void testSkipUntilMetricsFactoryAvailable() throws InterruptedException {
+        final Semaphore semaphore = new Semaphore(-1);
+
+        final MetricsFactory metricsFactory = Mockito.mock(MetricsFactory.class);
+        final Metrics metricsA = Mockito.mock(Metrics.class, "A");
+
+        Mockito.doAnswer(ignored -> {
+            semaphore.release();
+            return metricsA;
+        }).when(metricsFactory).create();
+
+        final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(() -> {
+            if (semaphore.availablePermits() == -1) {
+                semaphore.release();
+                return Optional.empty();
+            }
+            return Optional.of(metricsFactory);
+        });
+        eventHandler.attemptComplete(1, 2, true, TsdQuantity.newInstance(123, Units.NANOSECOND));
+        semaphore.acquire();
+        eventHandler.attemptComplete(3, 4, false, TsdQuantity.newInstance(246, Units.NANOSECOND));
+        semaphore.acquire();
+
+        Mockito.verify(metricsFactory, Mockito.times(2)).create();
+        Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/records", 3);
+        Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/bytes", 4);
+        Mockito.verify(metricsA, Mockito.times(1)).resetCounter("metrics_client/apache_http_sink/success_rate");
         Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 246, Units.NANOSECOND);
         Mockito.verify(metricsA).close();
         Mockito.verifyNoMoreInteractions(metricsA);
