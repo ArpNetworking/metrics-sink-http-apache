@@ -15,10 +15,12 @@
  */
 package com.arpnetworking.metrics.impl;
 
+import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Metrics;
 import com.arpnetworking.metrics.MetricsFactory;
 import com.arpnetworking.metrics.Units;
 import org.junit.Test;
+import org.mockito.Matchers;
 import org.mockito.Mockito;
 
 import java.util.Optional;
@@ -32,7 +34,7 @@ import java.util.concurrent.Semaphore;
 public final class InstrumentedApacheHttpSinkEventHandlerTest {
 
     @Test
-    public void test() throws InterruptedException {
+    public void testRecordCompletedAttempts() throws InterruptedException {
         final Semaphore semaphore = new Semaphore(-2);
 
         final MetricsFactory metricsFactory = Mockito.mock(MetricsFactory.class);
@@ -71,6 +73,173 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
     }
 
     @Test
+    public void testRecordCompletedAttemptsMetricsThrows() throws InterruptedException {
+        // NOTE: The metrics instance is exception safe by contract; this
+        // unit test exists only to work around deficiencies in Jacoco.
+        // See: https://github.com/jacoco/jacoco/issues/15
+        final Semaphore semaphore = new Semaphore(0);
+
+        final MetricsFactory metricsFactory = Mockito.mock(MetricsFactory.class);
+        final Metrics metrics = Mockito.mock(Metrics.class);
+        Mockito.doAnswer(ignored -> {
+                    semaphore.release();
+                    return metrics;
+                })
+                .doAnswer(ignored -> {
+                    semaphore.release();
+                    return null;
+                })
+                .when(metricsFactory)
+                .create();
+        Mockito.doThrow(new IllegalStateException("Test Exception"))
+                .when(metrics)
+                .incrementCounter(Matchers.anyString(), Matchers.anyLong());
+
+        final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(
+                () -> Optional.of(metricsFactory));
+
+        semaphore.acquire();
+        try {
+            eventHandler.attemptComplete(3, 4, false, TsdQuantity.newInstance(246, Units.NANOSECOND));
+        } catch (final IllegalStateException e) {
+            // Ignore
+        }
+        semaphore.acquire();
+
+        // The following is used to force the write lock to be given up; since
+        // the second metrics instance created by our factory is null this data
+        // is not recorded.
+        eventHandler.attemptComplete(-1, -1, true, TsdQuantity.newInstance(123, Units.NANOSECOND));
+
+        Mockito.verify(metricsFactory, Mockito.times(2)).create();
+        Mockito.verify(metrics).incrementCounter("metrics_client/apache_http_sink/records", 3);
+        Mockito.verify(metrics).close();
+        Mockito.verifyNoMoreInteractions(metrics);
+    }
+
+    @Test
+    public void testRecordDropped() throws InterruptedException {
+        final Semaphore semaphore = new Semaphore(-2);
+
+        final Event eventA = Mockito.mock(Event.class, "A");
+        final Event eventB = Mockito.mock(Event.class, "B");
+        final MetricsFactory metricsFactory = Mockito.mock(MetricsFactory.class);
+        final Metrics metricsA = Mockito.mock(Metrics.class, "A");
+        final Metrics metricsB = Mockito.mock(Metrics.class, "B");
+
+        Mockito.doAnswer(ignored -> {
+            try {
+                if (semaphore.availablePermits() == -2) {
+                    return metricsA;
+                } else {
+                    return metricsB;
+                }
+            } finally {
+                semaphore.release();
+            }
+        }).when(metricsFactory).create();
+
+        final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(
+                () -> Optional.of(metricsFactory));
+        eventHandler.droppedEvent(eventA);
+        eventHandler.droppedEvent(eventB);
+        semaphore.acquire();
+
+        Mockito.verify(metricsFactory, Mockito.times(3)).create();
+        Mockito.verify(metricsA, Mockito.times(2)).incrementCounter("metrics_client/apache_http_sink/dropped");
+        Mockito.verify(metricsA).close();
+        Mockito.verifyNoMoreInteractions(metricsA);
+    }
+
+    @Test
+    public void testRecordDroppedMetricsThrows() throws InterruptedException {
+        // NOTE: The metrics instance is exception safe by contract; this
+        // unit test exists only to work around deficiencies in Jacoco.
+        // See: https://github.com/jacoco/jacoco/issues/15
+        final Semaphore semaphore = new Semaphore(0);
+
+        final Event eventA = Mockito.mock(Event.class, "A");
+        final Event eventB = Mockito.mock(Event.class, "B");
+        final MetricsFactory metricsFactory = Mockito.mock(MetricsFactory.class);
+        final Metrics metrics = Mockito.mock(Metrics.class);
+        Mockito.doAnswer(ignored -> {
+            semaphore.release();
+            return metrics;
+        })
+                .doAnswer(ignored -> {
+                    semaphore.release();
+                    return null;
+                })
+                .when(metricsFactory)
+                .create();
+        Mockito.doThrow(new IllegalStateException("Test Exception"))
+                .when(metrics)
+                .incrementCounter(Matchers.anyString());
+
+        final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(
+                () -> Optional.of(metricsFactory));
+
+        semaphore.acquire();
+        try {
+            eventHandler.droppedEvent(eventA);
+        } catch (final IllegalStateException e) {
+            // Ignore
+        }
+        semaphore.acquire();
+
+        // The following is used to force the write lock to be given up; since
+        // the second metrics instance created by our factory is null this data
+        // is not recorded.
+        eventHandler.droppedEvent(eventB);
+
+        Mockito.verify(metricsFactory, Mockito.times(2)).create();
+        Mockito.verify(metrics).incrementCounter("metrics_client/apache_http_sink/dropped");
+        Mockito.verify(metrics).close();
+        Mockito.verifyNoMoreInteractions(metrics);
+    }
+
+    @Test
+    public void testMetricsFactoryThrows() throws InterruptedException {
+        // NOTE: The metrics factory instance is exception safe by contract;
+        // this unit test exists only to work around deficiencies in Jacoco.
+        // See: https://github.com/jacoco/jacoco/issues/15
+        final Semaphore semaphore = new Semaphore(0);
+
+        final MetricsFactory metricsFactory = Mockito.mock(MetricsFactory.class);
+        final Metrics metrics = Mockito.mock(Metrics.class);
+        Mockito.doAnswer(ignored -> {
+            semaphore.release();
+            return metrics;
+        })
+                .doAnswer(ignored -> {
+                    semaphore.release();
+                    throw new IllegalStateException("Test Exception");
+                })
+                .when(metricsFactory)
+                .create();
+
+        final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(
+                () -> Optional.of(metricsFactory));
+
+        semaphore.acquire();
+        eventHandler.attemptComplete(3, 4, false, TsdQuantity.newInstance(246, Units.NANOSECOND));
+        semaphore.acquire();
+
+        // The following is used to force the write lock to be given up; since
+        // the second metrics instance created by our factory is null this data
+        // is not recorded.
+        eventHandler.attemptComplete(-1, -1, true, TsdQuantity.newInstance(123, Units.NANOSECOND));
+
+        Mockito.verify(metricsFactory, Mockito.times(2)).create();
+        Mockito.verify(metrics).incrementCounter("metrics_client/apache_http_sink/records", 3);
+        Mockito.verify(metrics).incrementCounter("metrics_client/apache_http_sink/bytes", 4);
+        Mockito.verify(metrics, Mockito.times(1)).resetCounter("metrics_client/apache_http_sink/success_rate");
+        Mockito.verify(metrics).setTimer("metrics_client/apache_http_sink/latency", 246, Units.NANOSECOND);
+        Mockito.verify(metrics).close();
+        Mockito.verifyNoMoreInteractions(metrics);
+    }
+
+    @Test
     public void testSkipUntilMetricsFactoryAvailable() throws InterruptedException {
         final Semaphore semaphore = new Semaphore(-1);
 
@@ -95,6 +264,9 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
         semaphore.acquire();
 
         Mockito.verify(metricsFactory, Mockito.times(2)).create();
+        Mockito.verify(metricsA).resetCounter("metrics_client/apache_http_sink/records");
+        Mockito.verify(metricsA).resetCounter("metrics_client/apache_http_sink/bytes");
+        Mockito.verify(metricsA).resetCounter("metrics_client/apache_http_sink/dropped");
         Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/records", 3);
         Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/bytes", 4);
         Mockito.verify(metricsA, Mockito.times(1)).resetCounter("metrics_client/apache_http_sink/success_rate");

@@ -15,6 +15,7 @@
  */
 package com.arpnetworking.metrics.impl;
 
+import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Metrics;
 import com.arpnetworking.metrics.MetricsFactory;
 import com.arpnetworking.metrics.Quantity;
@@ -35,6 +36,7 @@ import java.util.function.Supplier;
  * implementation.
  *
  * TODO(ville): Convert to using PeriodicMetrics from the incubator project.
+ * TODO(ville): Add queue length metric by periodically polling the sink.
  *
  * @author Ville Koskela (ville dot koskela at inscopemetrics dot com)
  */
@@ -65,6 +67,18 @@ public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpS
         }
     }
 
+    @Override
+    public void droppedEvent(final Event event) {
+        try {
+            _readWriteLock.readLock().lock();
+            if (_metrics != null) {
+                _metrics.incrementCounter("metrics_client/apache_http_sink/dropped");
+            }
+        } finally {
+            _readWriteLock.readLock().unlock();
+        }
+    }
+
     /**
      * Public constructor.
      *
@@ -76,24 +90,7 @@ public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpS
         _metricsFactorySupplier = metricsFactorySupplier;
         _metrics = _metricsFactorySupplier.get().map(MetricsFactory::create).orElse(null);
         _executorService.scheduleAtFixedRate(
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        if (_metrics != null) {
-                            final Metrics metrics;
-                            try {
-                                _readWriteLock.writeLock().lock();
-                                metrics = _metrics;
-                                _metrics = _metricsFactorySupplier.get().map(MetricsFactory::create).orElse(null);
-                            } finally {
-                                _readWriteLock.writeLock().unlock();
-                            }
-                            metrics.close();
-                        } else {
-                            _metrics = _metricsFactorySupplier.get().map(MetricsFactory::create).orElse(null);
-                        }
-                    }
-                },
+                new PeriodicUnitOfWork(),
                 DELAY_IN_MILLISECONDS,
                 DELAY_IN_MILLISECONDS,
                 TimeUnit.MILLISECONDS);
@@ -107,4 +104,27 @@ public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpS
     private volatile Metrics _metrics;
 
     private static final long DELAY_IN_MILLISECONDS = 500L;
+
+    private final class PeriodicUnitOfWork implements Runnable {
+        @Override
+        public void run() {
+            if (_metrics != null) {
+                try {
+                    _readWriteLock.writeLock().lock();
+                    _metrics.close();
+                    _metrics = null;
+                    _metrics = _metricsFactorySupplier.get().map(MetricsFactory::create).orElse(null);
+                    if (_metrics != null) {
+                        _metrics.resetCounter("metrics_client/apache_http_sink/records");
+                        _metrics.resetCounter("metrics_client/apache_http_sink/bytes");
+                        _metrics.resetCounter("metrics_client/apache_http_sink/dropped");
+                    }
+                } finally {
+                    _readWriteLock.writeLock().unlock();
+                }
+            } else {
+                _metrics = _metricsFactorySupplier.get().map(MetricsFactory::create).orElse(null);
+            }
+        }
+    }
 }

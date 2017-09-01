@@ -15,6 +15,7 @@
  */
 package com.arpnetworking.metrics.impl;
 
+import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Quantity;
 
 /**
@@ -33,4 +34,11 @@ public interface ApacheHttpSinkEventHandler {
      * @param elapasedTime the elapsed time
      */
     void attemptComplete(long records, long bytes, boolean success, Quantity elapasedTime);
+
+    /**
+     * Callback invoked when an {@link Event} is dropped from the queue.
+     *
+     * @param event the {@link Event} dropped from the queue
+     */
+    void droppedEvent(Event event);
 }

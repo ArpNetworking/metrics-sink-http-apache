@@ -105,8 +105,8 @@
     <maven.shade.plugin.version>2.4.3</maven.shade.plugin.version>
 
     <!-- Code Coverage -->
-    <jacoco.check.line.coverage>0.95</jacoco.check.line.coverage>
-    <jacoco.check.branch.coverage>0.89</jacoco.check.branch.coverage>
+    <jacoco.check.line.coverage>0.99</jacoco.check.line.coverage>
+    <jacoco.check.branch.coverage>0.92</jacoco.check.branch.coverage>
   </properties>
   <build>
     <plugins>
