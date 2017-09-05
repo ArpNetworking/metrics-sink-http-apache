@@ -127,7 +127,7 @@ public final class ApacheHttpSink implements Sink {
 
         final ExecutorService executor = Executors.newFixedThreadPool(
                 builder._parallelism,
-                (runnable) -> new Thread(runnable, "MetricsSinkApacheHttpWorker"));
+                runnable -> new Thread(runnable, "MetricsSinkApacheHttpWorker"));
 
         Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(this._isRunning, executor));
 
