@@ -33,6 +33,7 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.message.BasicHeader;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
@@ -68,13 +69,16 @@ public final class ApacheHttpSink implements Sink {
         _events.push(event);
         final int events = _eventsCount.incrementAndGet();
         if (events > _bufferSize) {
-            //TODO(ville): Drop multiple items when full
-            //TODO(ville): Configure the number of items to drop when full
             _eventsDroppedLogger.getLogger().warn(
                     "Event queue is full; dropping event(s)");
-            _events.pollFirst();
+            final Event droppedEvent = _events.pollFirst();
+            _eventHandler.ifPresent(eh -> eh.droppedEvent(droppedEvent));
             _eventsCount.decrementAndGet();
         }
+    }
+
+    /* package private */ void stop() {
+        _isRunning.set(false);
     }
 
     /* package private */ static void safeSleep(final long millis) {
@@ -86,13 +90,39 @@ public final class ApacheHttpSink implements Sink {
     }
 
     private ApacheHttpSink(final Builder builder) {
+        this(builder, LOGGER);
+    }
+
+    /* package private */ ApacheHttpSink(final Builder builder, final Logger logger) {
+        this(
+                builder,
+                new SingletonSupplier<>(() -> {
+                    final SingletonSupplier<PoolingHttpClientConnectionManager> clientManagerSupplier = new SingletonSupplier<>(() -> {
+                        final PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
+                        connectionManager.setDefaultMaxPerRoute(builder._parallelism);
+                        connectionManager.setMaxTotal(builder._parallelism);
+                        return connectionManager;
+                    });
+
+                    return HttpClients.custom()
+                            .setConnectionManager(clientManagerSupplier.get())
+                            .build();
+                }),
+                logger);
+    }
+
+    /* package private */ ApacheHttpSink(
+            final Builder builder,
+            final Supplier<CloseableHttpClient> httpClientSupplier,
+            final org.slf4j.Logger logger) {
         _uri = builder._uri;
         _bufferSize = builder._bufferSize;
         _maxBatchSize = builder._maxBatchSize;
         _emptyQueueInterval = builder._emptyQueueInterval;
+        _eventHandler = Optional.ofNullable(builder._eventHandler);
         _eventsDroppedLogger = new RateLimitedLogger(
                 "EventsDroppedLogger",
-                LOGGER,
+                logger,
                 builder._eventsDroppedLoggingInterval);
 
         final ExecutorService executor = Executors.newFixedThreadPool(
@@ -101,20 +131,12 @@ public final class ApacheHttpSink implements Sink {
 
         Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(this._isRunning, executor));
 
-        // Delay connection manage construction so the constructor does not block
-        final Supplier<PoolingHttpClientConnectionManager> connectionManagerSupplier =
-                new SingletonSupplier<>(() -> {
-                    final PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
-                    connectionManager.setDefaultMaxPerRoute(builder._parallelism);
-                    connectionManager.setMaxTotal(builder._parallelism);
-                    return connectionManager;
-                });
-
         // Use a single shared worker instance across the pool; see getSharedHttpClient
         final HttpDispatch httpDispatchWorker = new HttpDispatch(
-                connectionManagerSupplier,
+                httpClientSupplier,
                 builder._eventsDroppedLoggingInterval,
-                Optional.ofNullable(builder._eventHandler));
+                logger,
+                _eventHandler);
         for (int i = 0; i < builder._parallelism; ++i) {
             executor.execute(httpDispatchWorker);
         }
@@ -124,6 +146,7 @@ public final class ApacheHttpSink implements Sink {
     private final int _bufferSize;
     private final int _maxBatchSize;
     private final Duration _emptyQueueInterval;
+    private final Optional<ApacheHttpSinkEventHandler> _eventHandler;
     private final RateLimitedLogger _eventsDroppedLogger;
     private final Deque<Event> _events = new ConcurrentLinkedDeque<>();
     private final AtomicInteger _eventsCount = new AtomicInteger(0);
@@ -155,65 +178,70 @@ public final class ApacheHttpSink implements Sink {
     private final class HttpDispatch implements Runnable {
 
         /* package private */ HttpDispatch(
-                final Supplier<PoolingHttpClientConnectionManager> connectionManager,
+                final Supplier<CloseableHttpClient> httpClientSupplier,
                 final Duration dispatchErrorLoggingInterval,
+                final org.slf4j.Logger logger,
                 final Optional<ApacheHttpSinkEventHandler> eventHandler) {
-            _connectionManager = connectionManager;
+            _httpClientSupplier = httpClientSupplier;
             _dispatchErrorLogger = new RateLimitedLogger(
                     "DispatchErrorLogger",
-                    LOGGER,
+                    logger,
                     dispatchErrorLoggingInterval);
             _eventHandler = eventHandler;
         }
 
         @Override
         public void run() {
-            final CloseableHttpClient httpClient = getSharedHttpClient();
             while (_isRunning.get()) {
-                // Collect a set of events to send
-                // NOTE: This also builds the serialization types in order to spend more time
-                // allowing more records to arrive in the batch
-                int collected = 0;
+                try {
+                    // Collect a set of events to send
+                    // NOTE: This also builds the serialization types in order to spend more time
+                    // allowing more records to arrive in the batch
+                    int collected = 0;
+                    final ClientV1.RecordSet.Builder requestBuilder = ClientV1.RecordSet.newBuilder();
+                    do {
+                        final @Nullable Event event = _events.pollFirst();
+                        if (event == null) {
+                            break;
+                        }
 
-                final ClientV1.RecordSet.Builder requestBuilder = ClientV1.RecordSet.newBuilder();
-                do {
-                    final @Nullable Event event = _events.pollFirst();
-                    if (event == null) {
-                        break;
+                        _eventsCount.decrementAndGet();
+                        collected++;
+
+                        requestBuilder.addRecords(serializeEvent(event));
+                    } while (collected < _maxBatchSize);
+
+                    if (collected > 0) {
+                        dispatchRequest(_httpClientSupplier.get(), requestBuilder.build());
                     }
 
-                    _eventsCount.decrementAndGet();
-                    collected++;
-
-                    requestBuilder.addRecords(serializeEvent(event));
-                } while (collected < _maxBatchSize);
-
-                if (collected > 0) {
-                    dispatchRequest(httpClient, requestBuilder.build());
-                }
-
-                // Sleep if the queue is empty
-                if (collected == 0) {
-                    safeSleep(_emptyQueueInterval.toMillis());
+                    // Sleep if the queue is empty
+                    if (collected == 0) {
+                        safeSleep(_emptyQueueInterval.toMillis());
+                    }
+                    // CHECKSTYLE.OFF: IllegalCatch - Ensure exception neutrality
+                } catch (final RuntimeException e) {
+                    // CHECKSTYLE.ON: IllegalCatch
+                    _dispatchErrorLogger.getLogger().error("MetricsSinkApacheHttpWorker failure", e);
                 }
             }
         }
 
         private void dispatchRequest(final CloseableHttpClient httpClient, final ClientV1.RecordSet recordSet) {
-            final ByteArrayEntity entity = new ByteArrayEntity(recordSet.toByteArray());
-            final HttpPost post = new HttpPost(_uri);
-
-            post.setHeader(CONTENT_TYPE_HEADER);
-            post.setEntity(entity);
-
             // TODO(ville): We need to add retries.
             // Requests that fail should either go into a different retry queue
             // or else be requeued at the front of the existing queue (unless
             // it's full). The data will need to be wrapped with an attempt
             // count.
+            final ByteArrayEntity entity = new ByteArrayEntity(recordSet.toByteArray());
+            final HttpPost post = new HttpPost(_uri);
+            post.setHeader(CONTENT_TYPE_HEADER);
+            post.setEntity(entity);
+
             final StopWatch stopWatch = StopWatch.start();
             boolean success = false;
-            try (final CloseableHttpResponse response = httpClient.execute(post)) {
+
+            try (CloseableHttpResponse response = httpClient.execute(post)) {
                 final int statusCode = response.getStatusLine().getStatusCode();
                 if ((statusCode / 100) != 2) {
                     _dispatchErrorLogger.getLogger().error(
@@ -224,20 +252,23 @@ public final class ApacheHttpSink implements Sink {
                 } else {
                     success = true;
                 }
-            } catch (final IOException e) {
+                // CHECKSTYLE.OFF: IllegalCatch - Prevent leaking exceptions; it makes testing more complex
+            } catch (final RuntimeException | IOException e) {
+                // CHECKSTYLE.ON: IllegalCatch
                 _dispatchErrorLogger.getLogger().error(
                         String.format(
                                 "Encountered failure when sending metrics to HTTP endpoint; uri=%s",
                                 _uri),
                         e);
-            }
-            stopWatch.stop();
-            if (_eventHandler.isPresent()) {
-                _eventHandler.get().attemptComplete(
-                        recordSet.getRecordsCount(),
-                        entity.getContentLength(),
-                        success,
-                        stopWatch.getElapsedTime());
+            } finally {
+                stopWatch.stop();
+                if (_eventHandler.isPresent()) {
+                    _eventHandler.get().attemptComplete(
+                            recordSet.getRecordsCount(),
+                            entity.getContentLength(),
+                            success,
+                            stopWatch.getElapsedTime());
+                }
             }
         }
 
@@ -317,20 +348,15 @@ public final class ApacheHttpSink implements Sink {
                 final ClientV1.DoubleQuantity.Builder quantityBuilder = ClientV1.DoubleQuantity.newBuilder()
                         .setValue(quantity.getValue().doubleValue());
                 final ClientV1.CompoundUnit unit = buildUnit(quantity.getUnit());
-                if (unit != null) {
-                    quantityBuilder.setUnit(unit);
-                }
+                quantityBuilder.setUnit(unit);
                 timerQuantities.add(quantityBuilder.build());
             }
             return timerQuantities;
         }
 
-        private @Nullable ClientV1.CompoundUnit buildUnit(@Nullable final Unit unit) {
-            if (unit == null) {
-                return null;
-            }
-
+        private ClientV1.CompoundUnit buildUnit(@Nullable final Unit unit) {
             final ClientV1.CompoundUnit.Builder builder = ClientV1.CompoundUnit.newBuilder();
+
             if (unit instanceof CompoundUnit) {
                 final CompoundUnit compoundUnit = (CompoundUnit) unit;
                 for (final Unit numeratorUnit : compoundUnit.getNumeratorUnits()) {
@@ -340,7 +366,7 @@ public final class ApacheHttpSink implements Sink {
                 for (final Unit denominatorUnit : compoundUnit.getDenominatorUnits()) {
                     builder.addDenominator(mapUnit(denominatorUnit));
                 }
-            } else {
+            } else if (unit != null) {
                 final ClientV1.Unit numeratorUnit = mapUnit(unit);
                 if (numeratorUnit != null) {
                     builder.addNumerator(numeratorUnit);
@@ -374,23 +400,9 @@ public final class ApacheHttpSink implements Sink {
             return builder.build();
         }
 
-        private synchronized CloseableHttpClient getSharedHttpClient() {
-            // Defer construction of the http client to the worker threads to
-            // ensure that the thread constructing the sink is not blocked.
-            // This method is thread safe to ensure only a single instance is
-            // constructed for the worker pool.
-            if (_httpClient == null) {
-                _httpClient = HttpClients.custom()
-                        .setConnectionManager(_connectionManager.get())
-                        .build();
-            }
-            return _httpClient;
-        }
-
-        private final Supplier<PoolingHttpClientConnectionManager> _connectionManager;
+        private final Supplier<CloseableHttpClient> _httpClientSupplier;
         private final RateLimitedLogger _dispatchErrorLogger;
         private final Optional<ApacheHttpSinkEventHandler> _eventHandler;
-        private CloseableHttpClient _httpClient;
     }
 
     private static final class ShutdownHookThread extends Thread {
@@ -589,7 +601,7 @@ public final class ApacheHttpSink implements Sink {
         }
 
         private void validate(final List<String> failures) {
-            if (_uri == null || !_uri.getScheme().equalsIgnoreCase("http") && !_uri.getScheme().equalsIgnoreCase("https")) {
+            if (!_uri.getScheme().equalsIgnoreCase("http") && !_uri.getScheme().equalsIgnoreCase("https")) {
                 failures.add(String.format("URI must be an http(s) URI; uri=%s", _uri));
             }
         }
@@ -601,8 +613,7 @@ public final class ApacheHttpSink implements Sink {
         private Duration _emptyQueueInterval = DEFAULT_EMPTY_QUEUE_INTERVAL;
         private Duration _eventsDroppedLoggingInterval = DEFAULT_EVENTS_DROPPED_LOGGING_INTERVAL;
         private Duration _dispatchErrorLoggingInterval = DEFAULT_DISPATCH_ERROR_LOGGING_INTERVAL;
-        private @Nullable
-        ApacheHttpSinkEventHandler _eventHandler;
+        private @Nullable ApacheHttpSinkEventHandler _eventHandler;
 
         private static final Integer DEFAULT_BUFFER_SIZE = 10000;
         private static final URI DEFAULT_URI = URI.create("http://localhost:7090/metrics/v1/application");
