@@ -15,6 +15,7 @@
  */
 package com.arpnetworking.metrics.impl;
 
+import com.arpnetworking.commons.java.util.function.SingletonSupplier;
 import com.arpnetworking.commons.slf4j.RateLimitedLogger;
 import com.arpnetworking.metrics.CompoundUnit;
 import com.arpnetworking.metrics.Event;
@@ -23,7 +24,7 @@ import com.arpnetworking.metrics.Sink;
 import com.arpnetworking.metrics.StopWatch;
 import com.arpnetworking.metrics.Unit;
 import com.google.protobuf.ByteString;
-import com.inscopemetrics.client.protocol.ClientV1;
+import com.inscopemetrics.client.protocol.ClientV2;
 import org.apache.http.Header;
 import org.apache.http.HttpHeaders;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -155,26 +156,6 @@ public final class ApacheHttpSink implements Sink {
     private static final Header CONTENT_TYPE_HEADER = new BasicHeader(HttpHeaders.CONTENT_TYPE, "application/octet-stream");
     private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger(ApacheHttpSink.class);
 
-    /* package private */ static final class SingletonSupplier<T> implements Supplier<T> {
-
-        /* package private */ SingletonSupplier(final Supplier<T> supplier) {
-            _supplier = supplier;
-        }
-
-        @Override
-        public T get() {
-            if (_reference == null) {
-                synchronized (this) {
-                    _reference = _supplier.get();
-                }
-            }
-            return _reference;
-        }
-
-        private final Supplier<T> _supplier;
-        private volatile T _reference;
-    }
-
     private final class HttpDispatch implements Runnable {
 
         /* package private */ HttpDispatch(
@@ -198,7 +179,7 @@ public final class ApacheHttpSink implements Sink {
                     // NOTE: This also builds the serialization types in order to spend more time
                     // allowing more records to arrive in the batch
                     int collected = 0;
-                    final ClientV1.RecordSet.Builder requestBuilder = ClientV1.RecordSet.newBuilder();
+                    final ClientV2.RecordSet.Builder requestBuilder = ClientV2.RecordSet.newBuilder();
                     do {
                         final @Nullable Event event = _events.pollFirst();
                         if (event == null) {
@@ -227,7 +208,7 @@ public final class ApacheHttpSink implements Sink {
             }
         }
 
-        private void dispatchRequest(final CloseableHttpClient httpClient, final ClientV1.RecordSet recordSet) {
+        private void dispatchRequest(final CloseableHttpClient httpClient, final ClientV2.RecordSet recordSet) {
             // TODO(ville): We need to add retries.
             // Requests that fail should either go into a different retry queue
             // or else be requeued at the front of the existing queue (unless
@@ -272,32 +253,32 @@ public final class ApacheHttpSink implements Sink {
             }
         }
 
-        private ClientV1.Record serializeEvent(final Event event) {
-            final ClientV1.Record.Builder builder = ClientV1.Record.newBuilder();
+        private ClientV2.Record serializeEvent(final Event event) {
+            final ClientV2.Record.Builder builder = ClientV2.Record.newBuilder();
             for (final Map.Entry<String, String> annotation : event.getAnnotations().entrySet()) {
                 builder.addAnnotations(
-                        ClientV1.AnnotationEntry.newBuilder()
+                        ClientV2.AnnotationEntry.newBuilder()
                                 .setName(annotation.getKey())
                                 .setValue(annotation.getValue())
                                 .build());
             }
 
             for (final Map.Entry<String, List<Quantity>> entry : event.getCounterSamples().entrySet()) {
-                builder.addCounters(ClientV1.MetricEntry.newBuilder()
+                builder.addCounters(ClientV2.MetricEntry.newBuilder()
                         .addAllSamples(buildQuantities(entry.getValue()))
                         .setName(entry.getKey())
                         .build());
             }
 
             for (final Map.Entry<String, List<Quantity>> entry : event.getTimerSamples().entrySet()) {
-                builder.addTimers(ClientV1.MetricEntry.newBuilder()
+                builder.addTimers(ClientV2.MetricEntry.newBuilder()
                         .addAllSamples(buildQuantities(entry.getValue()))
                         .setName(entry.getKey())
                         .build());
             }
 
             for (final Map.Entry<String, List<Quantity>> entry : event.getGaugeSamples().entrySet()) {
-                builder.addGauges(ClientV1.MetricEntry.newBuilder()
+                builder.addGauges(ClientV2.MetricEntry.newBuilder()
                         .addAllSamples(buildQuantities(entry.getValue()))
                         .setName(entry.getKey())
                         .build());
@@ -306,17 +287,17 @@ public final class ApacheHttpSink implements Sink {
             //TODO(brandonarp): just pull from dimensions once the library supports it
             final String host = event.getAnnotations().get("_host");
             if (host != null) {
-                builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("host").setValue(host).build());
+                builder.addDimensions(ClientV2.DimensionEntry.newBuilder().setName("host").setValue(host).build());
             }
 
             final String service = event.getAnnotations().get("_service");
             if (service != null) {
-                builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("service").setValue(service).build());
+                builder.addDimensions(ClientV2.DimensionEntry.newBuilder().setName("service").setValue(service).build());
             }
 
             final String cluster = event.getAnnotations().get("_cluster");
             if (cluster != null) {
-                builder.addDimensions(ClientV1.DimensionEntry.newBuilder().setName("cluster").setValue(cluster).build());
+                builder.addDimensions(ClientV2.DimensionEntry.newBuilder().setName("cluster").setValue(cluster).build());
             }
 
             extractTimestamp(event, "_end", builder::setEndMillisSinceEpoch);
@@ -342,20 +323,28 @@ public final class ApacheHttpSink implements Sink {
             }
         }
 
-        private List<ClientV1.DoubleQuantity> buildQuantities(final List<Quantity> quantities) {
-            final List<ClientV1.DoubleQuantity> timerQuantities = new ArrayList<>(quantities.size());
+        private List<ClientV2.Quantity> buildQuantities(final List<Quantity> quantities) {
+            final List<ClientV2.Quantity> timerQuantities = new ArrayList<>(quantities.size());
             for (final Quantity quantity : quantities) {
-                final ClientV1.DoubleQuantity.Builder quantityBuilder = ClientV1.DoubleQuantity.newBuilder()
-                        .setValue(quantity.getValue().doubleValue());
-                final ClientV1.CompoundUnit unit = buildUnit(quantity.getUnit());
+                final ClientV2.Quantity.Builder quantityBuilder = ClientV2.Quantity.newBuilder();
+                final Number quantityValue = quantity.getValue();
+                if (quantityValue instanceof Long
+                        || quantityValue instanceof Integer
+                        || quantityValue instanceof Short
+                        || quantityValue instanceof Byte) {
+                    quantityBuilder.setLongValue(quantityValue.longValue());
+                } else {
+                    quantityBuilder.setDoubleValue(quantityValue.doubleValue());
+                }
+                final ClientV2.CompoundUnit unit = buildUnit(quantity.getUnit());
                 quantityBuilder.setUnit(unit);
                 timerQuantities.add(quantityBuilder.build());
             }
             return timerQuantities;
         }
 
-        private ClientV1.CompoundUnit buildUnit(@Nullable final Unit unit) {
-            final ClientV1.CompoundUnit.Builder builder = ClientV1.CompoundUnit.newBuilder();
+        private ClientV2.CompoundUnit buildUnit(@Nullable final Unit unit) {
+            final ClientV2.CompoundUnit.Builder builder = ClientV2.CompoundUnit.newBuilder();
 
             if (unit instanceof CompoundUnit) {
                 final CompoundUnit compoundUnit = (CompoundUnit) unit;
@@ -367,7 +356,7 @@ public final class ApacheHttpSink implements Sink {
                     builder.addDenominator(mapUnit(denominatorUnit));
                 }
             } else if (unit != null) {
-                final ClientV1.Unit numeratorUnit = mapUnit(unit);
+                final ClientV2.Unit numeratorUnit = mapUnit(unit);
                 if (numeratorUnit != null) {
                     builder.addNumerator(numeratorUnit);
                 }
@@ -375,7 +364,7 @@ public final class ApacheHttpSink implements Sink {
             return builder.build();
         }
 
-        private @Nullable ClientV1.Unit mapUnit(final Unit unit) {
+        private @Nullable ClientV2.Unit mapUnit(final Unit unit) {
             final BaseUnit baseUnit;
             final BaseScale baseScale;
             if (unit instanceof TsdUnit) {
@@ -389,12 +378,24 @@ public final class ApacheHttpSink implements Sink {
                 return null;
             }
 
-            final ClientV1.Unit.Builder builder = ClientV1.Unit.newBuilder();
-            builder.setType(ClientV1.Unit.Type.valueOf(baseUnit.name()));
+            final ClientV2.Unit.Builder builder = ClientV2.Unit.newBuilder();
+            try {
+                builder.setType(ClientV2.Unit.Type.Value.valueOf(baseUnit.name()));
+            } catch (final IllegalArgumentException e) {
+                _dispatchErrorLogger.getLogger().warn(
+                        String.format("Dropping unsupported unit %s", baseUnit.name()));
+                builder.setType(ClientV2.Unit.Type.Value.UNKNOWN);
+            }
             if (baseScale != null) {
-                builder.setScale(ClientV1.Unit.Scale.valueOf(baseScale.name()));
+                try {
+                    builder.setScale(ClientV2.Unit.Scale.Value.valueOf(baseScale.name()));
+                } catch (final IllegalArgumentException e) {
+                    _dispatchErrorLogger.getLogger().warn(
+                            String.format("Dropping unsupported scale %s", baseScale.name()));
+                    builder.setScale(ClientV2.Unit.Scale.Value.UNKNOWN);
+                }
             } else {
-                builder.setScale(ClientV1.Unit.Scale.UNIT);
+                builder.setScale(ClientV2.Unit.Scale.Value.UNIT);
             }
 
             return builder.build();

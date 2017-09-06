@@ -18,7 +18,7 @@
   <parent>
     <groupId>com.arpnetworking.build</groupId>
     <artifactId>arpnetworking-parent-pom</artifactId>
-    <version>1.1.0</version>
+    <version>1.1.3</version>
     <relativePath />
   </parent>
 
@@ -29,7 +29,7 @@
   <name>Apache HTTP Sink</name>
   <description>Apache HTTP sink for metrics client.</description>
   <url>https://github.com/ArpNetworking/metrics-sink-http-apache</url>
-  <version>0.8.3-SNAPSHOT</version>
+  <version>0.9.0-SNAPSHOT</version>
 
   <licenses>
     <license>
@@ -88,24 +88,24 @@
     -->
 
     <!-- Dependency versions -->
-    <apache.http.client.version>4.5.2</apache.http.client.version>
-    <apache.http.core.version>4.4.5</apache.http.core.version>
-    <arpnetworking.commons.version>1.9.0</arpnetworking.commons.version>
-    <client.protocol.version>0.9.3</client.protocol.version>
+    <apache.http.client.version>4.5.3</apache.http.client.version>
+    <apache.http.core.version>4.4.6</apache.http.core.version>
+    <arpnetworking.commons.version>1.13.1</arpnetworking.commons.version>
+    <client.protocol.version>0.10.0</client.protocol.version>
     <hamcrest.version>2.0.0.0</hamcrest.version>
-    <jsr305.version>3.0.1</jsr305.version>
+    <jsr305.version>3.0.2</jsr305.version>
     <junit.version>4.12</junit.version>
-    <metrics.client.version>0.8.0</metrics.client.version>
-    <mockito.version>1.10.19</mockito.version>
-    <protobuf.version>3.1.0</protobuf.version>
-    <slf4j.version>1.7.22</slf4j.version>
-    <wiremock.version>2.5.0</wiremock.version>
+    <metrics.client.version>0.9.0</metrics.client.version>
+    <mockito.version>2.7.0</mockito.version>
+    <protobuf.version>3.4.0</protobuf.version>
+    <slf4j.version>1.7.25</slf4j.version>
+    <wiremock.version>2.8.0</wiremock.version>
 
     <!-- Plugin versions -->
-    <maven.shade.plugin.version>2.4.3</maven.shade.plugin.version>
+    <maven.shade.plugin.version>3.1.0</maven.shade.plugin.version>
 
     <!-- Code Coverage -->
-    <jacoco.check.line.coverage>0.99</jacoco.check.line.coverage>
+    <jacoco.check.line.coverage>0.97</jacoco.check.line.coverage>
     <jacoco.check.branch.coverage>0.92</jacoco.check.branch.coverage>
   </properties>
   <build>
