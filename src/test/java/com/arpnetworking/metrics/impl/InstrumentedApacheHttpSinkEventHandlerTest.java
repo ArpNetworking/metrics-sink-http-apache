@@ -20,7 +20,6 @@ import com.arpnetworking.metrics.Metrics;
 import com.arpnetworking.metrics.MetricsFactory;
 import com.arpnetworking.metrics.Units;
 import org.junit.Test;
-import org.mockito.Matchers;
 import org.mockito.Mockito;
 
 import java.util.Optional;
@@ -93,7 +92,7 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
                 .create();
         Mockito.doThrow(new IllegalStateException("Test Exception"))
                 .when(metrics)
-                .incrementCounter(Matchers.anyString(), Matchers.anyLong());
+                .incrementCounter(Mockito.anyString(), Mockito.anyLong());
 
         final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(
                 () -> Optional.of(metricsFactory));
@@ -174,7 +173,7 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
                 .create();
         Mockito.doThrow(new IllegalStateException("Test Exception"))
                 .when(metrics)
-                .incrementCounter(Matchers.anyString());
+                .incrementCounter(Mockito.anyString());
 
         final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(
                 () -> Optional.of(metricsFactory));
