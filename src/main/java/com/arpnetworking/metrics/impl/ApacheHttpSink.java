@@ -617,7 +617,7 @@ public final class ApacheHttpSink implements Sink {
         private @Nullable ApacheHttpSinkEventHandler _eventHandler;
 
         private static final Integer DEFAULT_BUFFER_SIZE = 10000;
-        private static final URI DEFAULT_URI = URI.create("http://localhost:7090/metrics/v1/application");
+        private static final URI DEFAULT_URI = URI.create("http://localhost:7090/metrics/v2/application");
         private static final Integer DEFAULT_PARALLELISM = 2;
         private static final Integer DEFAULT_MAX_BATCH_SIZE = 500;
         private static final Duration DEFAULT_EMPTY_QUEUE_INTERVAL = Duration.ofMillis(500);
