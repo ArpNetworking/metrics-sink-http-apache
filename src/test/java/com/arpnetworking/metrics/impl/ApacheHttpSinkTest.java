@@ -568,6 +568,67 @@ public final class ApacheHttpSinkTest {
     }
 
     @Test
+    public void testEndpointNotAvailable() throws InterruptedException {
+        _wireMockRule.stubFor(
+                WireMock.requestMatching(new RequestValueMatcher(
+                        r -> {
+                            // Annotations
+                            Assert.assertEquals(0, r.getAnnotationsCount());
+
+                            // Dimensions
+                            Assert.assertEquals(0, r.getDimensionsCount());
+
+                            // Samples
+                            Assert.assertEquals(0, r.getTimersCount());
+                            Assert.assertEquals(0, r.getCountersCount());
+                            Assert.assertEquals(0, r.getGaugesCount());
+                        }))
+                        .willReturn(WireMock.aResponse()
+                                .withStatus(404)));
+
+        final AtomicBoolean assertionResult = new AtomicBoolean(false);
+        final Semaphore semaphore = new Semaphore(0);
+        final org.slf4j.Logger logger = Mockito.mock(org.slf4j.Logger.class);
+        final Sink sink = new ApacheHttpSink(
+                new ApacheHttpSink.Builder()
+                        .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                        .setEventHandler(
+                                new AttemptCompletedAssertionHandler(
+                                        assertionResult,
+                                        1,
+                                        2,
+                                        false,
+                                        new CompletionHandler(
+                                                semaphore))),
+                logger);
+
+        final TsdEvent event = new TsdEvent(
+                ANNOTATIONS,
+                TEST_EMPTY_SERIALIZATION_TIMERS,
+                TEST_EMPTY_SERIALIZATION_COUNTERS,
+                TEST_EMPTY_SERIALIZATION_GAUGES);
+
+        sink.record(event);
+        semaphore.acquire();
+
+        // Ensure expected handler was invoked
+        Assert.assertTrue(assertionResult.get());
+
+        // Request matcher
+        final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
+                .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
+
+        // Assert that data was sent
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
+
+        // Assert that an IOException was captured
+        Mockito.verify(logger).error(
+                Mockito.startsWith("Encountered failure when sending metrics to HTTP endpoint; uri="),
+                Mockito.any(RuntimeException.class));
+    }
+
+    @Test
     public void testPostFailure() throws InterruptedException {
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(

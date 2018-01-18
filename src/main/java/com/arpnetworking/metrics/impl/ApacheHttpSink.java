@@ -27,6 +27,7 @@ import com.google.protobuf.ByteString;
 import com.inscopemetrics.client.protocol.ClientV2;
 import org.apache.http.Header;
 import org.apache.http.HttpHeaders;
+import org.apache.http.HttpStatus;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.ByteArrayEntity;
@@ -224,6 +225,15 @@ public final class ApacheHttpSink implements Sink {
 
             try (CloseableHttpResponse response = httpClient.execute(post)) {
                 final int statusCode = response.getStatusLine().getStatusCode();
+                if (statusCode == HttpStatus.SC_NOT_FOUND) {
+                    // While the server may be running and accepting HTTP
+                    // requests, the specific endpoint may not have been loaded
+                    // yet. Therefore, this case should not be treated any
+                    // differently than the server not being available. However,
+                    // it could also mean that the server does not support the
+                    // particular endpoint in use (e.g. version mismatch).
+                    throw new RuntimeException("Endpoint not available");
+                }
                 if ((statusCode / 100) != 2) {
                     _dispatchErrorLogger.getLogger().error(
                             String.format(
