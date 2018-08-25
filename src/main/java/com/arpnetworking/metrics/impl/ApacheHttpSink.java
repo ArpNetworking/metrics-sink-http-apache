@@ -612,7 +612,8 @@ public final class ApacheHttpSink implements Sink {
         }
 
         private void validate(final List<String> failures) {
-            if (!_uri.getScheme().equalsIgnoreCase("http") && !_uri.getScheme().equalsIgnoreCase("https")) {
+            if (_uri.getScheme() == null
+                    || (!_uri.getScheme().equalsIgnoreCase("http") && !_uri.getScheme().equalsIgnoreCase("https"))) {
                 failures.add(String.format("URI must be an http(s) URI; uri=%s", _uri));
             }
         }
