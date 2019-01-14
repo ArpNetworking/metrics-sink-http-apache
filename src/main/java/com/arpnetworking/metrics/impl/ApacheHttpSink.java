@@ -182,7 +182,7 @@ public final class ApacheHttpSink implements Sink {
                     int collected = 0;
                     final ClientV2.RecordSet.Builder requestBuilder = ClientV2.RecordSet.newBuilder();
                     do {
-                        final @Nullable Event event = _events.pollFirst();
+                        @Nullable final Event event = _events.pollFirst();
                         if (event == null) {
                             break;
                         }
