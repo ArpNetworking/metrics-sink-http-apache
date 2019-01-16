@@ -155,7 +155,6 @@
           <artifactSet>
             <excludes />
             <includes>
-              <include>com.arpnetworking.commons:commons</include>
               <include>com.inscopemetrics.client:protocol</include>
               <include>com.google.protobuf:protobuf-java</include>
               <include>org.apache.httpcomponents:httpclient</include>
@@ -165,13 +164,6 @@
             </includes>
           </artifactSet>
           <filters>
-            <filter>
-              <artifact>com.arpnetworking.commons:commons</artifact>
-              <excludes>
-                <exclude>LICENSE</exclude>
-                <exclude>META-INF/**</exclude>
-              </excludes>
-            </filter>
             <filter>
               <artifact>com.inscopemetrics.client:protocol</artifact>
               <excludes>
@@ -214,10 +206,6 @@
           </filters>
           <relocations>
             <relocation>
-              <pattern>com.arpnetworking.commons</pattern>
-              <shadedPattern>com.arpnetworking.metrics.apachehttpsinkextra.shaded.com.arpnetworking.commons</shadedPattern>
-            </relocation>
-            <relocation>
               <pattern>com.inscopemetrics.client.protocol</pattern>
               <shadedPattern>com.arpnetworking.metrics.apachehttpsinkextra.shaded.com.inscopemetrics.client.protocol</shadedPattern>
             </relocation>
@@ -256,16 +244,16 @@
       <version>${metrics.client.version}</version>
     </dependency>
     <dependency>
+      <groupId>com.arpnetworking.commons</groupId>
+      <artifactId>commons</artifactId>
+      <version>${arpnetworking.commons.version}</version>
+    </dependency>
+    <dependency>
       <groupId>com.google.code.findbugs</groupId>
       <artifactId>jsr305</artifactId>
       <version>${jsr305.version}</version>
     </dependency>
     <!-- Shaded -->
-    <dependency>
-      <groupId>com.arpnetworking.commons</groupId>
-      <artifactId>commons</artifactId>
-      <version>${arpnetworking.commons.version}</version>
-    </dependency>
     <dependency>
       <groupId>com.inscopemetrics.client</groupId>
       <artifactId>protocol</artifactId>
