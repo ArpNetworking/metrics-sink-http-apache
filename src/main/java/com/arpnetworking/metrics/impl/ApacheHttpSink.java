@@ -375,7 +375,9 @@ public final class ApacheHttpSink implements Sink {
             builder.addAllSamples(samples.stream().map(q -> q.getValue().doubleValue()).collect(Collectors.toList()));
             if (aggregatedData instanceof AugmentedHistogram) {
                 final AugmentedHistogram augmentedHistogram = (AugmentedHistogram) aggregatedData;
-                final long truncateMask = BASE_MASK >> augmentedHistogram.getPrecision();
+                final int precision = augmentedHistogram.getPrecision();
+                final long truncateMask = BASE_MASK >> precision;
+                final long packMask = (1 << (precision + EXPONENT_BITS + 1)) - 1;
                 builder.setStatistics(
                         ClientV3.AugmentedHistogram.newBuilder()
                                 .setPrecision(augmentedHistogram.getPrecision())
@@ -386,10 +388,15 @@ public final class ApacheHttpSink implements Sink {
                                         augmentedHistogram.getHistogram()
                                                 .entrySet()
                                                 .stream()
-                                                .map(entry -> ClientV3.SparseHistogramEntry.newBuilder()
-                                                        .setBucket(Double.doubleToRawLongBits(entry.getKey()) & truncateMask)
-                                                        .setCount(entry.getValue())
-                                                        .build())
+                                                .map(entry -> {
+                                                    final long truncatedKey = Double.doubleToRawLongBits(entry.getKey()) & truncateMask;
+                                                    final long shiftedKey = truncatedKey >> (MANTISSA_BITS - precision);
+                                                    final long packedKey = shiftedKey & packMask;
+                                                    return ClientV3.SparseHistogramEntry.newBuilder()
+                                                            .setBucket(packedKey)
+                                                            .setCount(entry.getValue())
+                                                            .build();
+                                                })
                                                 ::iterator)
                                 .build()
                 );

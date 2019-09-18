@@ -231,15 +231,15 @@ public final class ApacheHttpSinkTest {
                                             .setPrecision(7)
                                             .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
                                                     .setCount(1)
-                                                    .setBucket(histogramKey(1.0, 7))
+                                                    .setBucket(packHistogramKey(1.0, 7))
                                                     .build())
                                             .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
                                                     .setCount(2)
-                                                    .setBucket(histogramKey(2.0, 7))
+                                                    .setBucket(packHistogramKey(2.0, 7))
                                                     .build())
                                             .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
                                                     .setCount(3)
-                                                    .setBucket(histogramKey(3.0, 7))
+                                                    .setBucket(packHistogramKey(3.0, 7))
                                                     .build())
                                             .build());
                         }))
@@ -256,7 +256,7 @@ public final class ApacheHttpSinkTest {
                                 new AttemptCompletedAssertionHandler(
                                         assertionResult,
                                         1,
-                                        128,
+                                        110,
                                         true,
                                         new CompletionHandler(semaphore))),
                 logger);
@@ -319,15 +319,15 @@ public final class ApacheHttpSinkTest {
                                             .setPrecision(7)
                                             .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
                                                     .setCount(1)
-                                                    .setBucket(histogramKey(1.0, 7))
+                                                    .setBucket(packHistogramKey(1.0, 7))
                                                     .build())
                                             .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
                                                     .setCount(2)
-                                                    .setBucket(histogramKey(2.0, 7))
+                                                    .setBucket(packHistogramKey(2.0, 7))
                                                     .build())
                                             .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
                                                     .setCount(3)
-                                                    .setBucket(histogramKey(3.0, 7))
+                                                    .setBucket(packHistogramKey(3.0, 7))
                                                     .build())
                                             .build());
                         }))
@@ -344,7 +344,7 @@ public final class ApacheHttpSinkTest {
                                 new AttemptCompletedAssertionHandler(
                                         assertionResult,
                                         1,
-                                        103,
+                                        85,
                                         true,
                                         new CompletionHandler(semaphore))),
                 logger);
@@ -1209,9 +1209,13 @@ public final class ApacheHttpSinkTest {
                 .build();
     }
 
-    private static long histogramKey(final double value, final int precision) {
+    private static long packHistogramKey(final double value, final int precision) {
         final long truncateMask = 0xfff0000000000000L >> precision;
-        return Double.doubleToRawLongBits(value) & truncateMask;
+        final long packMask = (1 << (precision + 52 + 1)) - 1;
+
+        final long truncatedKey = Double.doubleToRawLongBits(value) & truncateMask;
+        final long shiftedKey = truncatedKey >> (52 - precision);
+        return shiftedKey & packMask;
     }
 
     @Rule
