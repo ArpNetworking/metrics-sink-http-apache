@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2017 Inscope Metrics, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,17 +18,17 @@ package com.arpnetworking.metrics.impl;
 import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Metrics;
 import com.arpnetworking.metrics.MetricsFactory;
-import com.arpnetworking.metrics.Units;
 import org.junit.Test;
 import org.mockito.Mockito;
 
 import java.util.Optional;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Tests for {@link InstrumentedApacheHttpSinkEventHandler}.
  *
- * @author Ville Koskela (ville dot koskela at inscopemetrics dot com)
+ * @author Ville Koskela (ville dot koskela at inscopemetrics dot io)
  */
 public final class InstrumentedApacheHttpSinkEventHandlerTest {
 
@@ -54,8 +54,8 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
 
         final ApacheHttpSinkEventHandler eventHandler = new InstrumentedApacheHttpSinkEventHandler(
                 () -> Optional.of(metricsFactory));
-        eventHandler.attemptComplete(1, 2, true, TsdQuantity.newInstance(123, Units.NANOSECOND));
-        eventHandler.attemptComplete(3, 4, false, TsdQuantity.newInstance(246, Units.NANOSECOND));
+        eventHandler.attemptComplete(1, 2, true, 123, TimeUnit.NANOSECONDS);
+        eventHandler.attemptComplete(3, 4, false, 246, TimeUnit.NANOSECONDS);
         semaphore.acquire();
 
         Mockito.verify(metricsFactory, Mockito.times(3)).create();
@@ -65,8 +65,8 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
         Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/bytes", 4);
         Mockito.verify(metricsA, Mockito.times(2)).resetCounter("metrics_client/apache_http_sink/success_rate");
         Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/success_rate");
-        Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 123, Units.NANOSECOND);
-        Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 246, Units.NANOSECOND);
+        Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 123, TimeUnit.NANOSECONDS);
+        Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 246, TimeUnit.NANOSECONDS);
         Mockito.verify(metricsA).close();
         Mockito.verifyNoMoreInteractions(metricsA);
     }
@@ -99,7 +99,7 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
 
         semaphore.acquire();
         try {
-            eventHandler.attemptComplete(3, 4, false, TsdQuantity.newInstance(246, Units.NANOSECOND));
+            eventHandler.attemptComplete(3, 4, false, 246, TimeUnit.NANOSECONDS);
         } catch (final IllegalStateException e) {
             // Ignore
         }
@@ -108,7 +108,7 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
         // The following is used to force the write lock to be given up; since
         // the second metrics instance created by our factory is null this data
         // is not recorded.
-        eventHandler.attemptComplete(-1, -1, true, TsdQuantity.newInstance(123, Units.NANOSECOND));
+        eventHandler.attemptComplete(-1, -1, true, 123, TimeUnit.NANOSECONDS);
 
         Mockito.verify(metricsFactory, Mockito.times(2)).create();
         Mockito.verify(metrics).incrementCounter("metrics_client/apache_http_sink/records", 3);
@@ -221,19 +221,19 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
                 () -> Optional.of(metricsFactory));
 
         semaphore.acquire();
-        eventHandler.attemptComplete(3, 4, false, TsdQuantity.newInstance(246, Units.NANOSECOND));
+        eventHandler.attemptComplete(3, 4, false, 246, TimeUnit.NANOSECONDS);
         semaphore.acquire();
 
         // The following is used to force the write lock to be given up; since
         // the second metrics instance created by our factory is null this data
         // is not recorded.
-        eventHandler.attemptComplete(-1, -1, true, TsdQuantity.newInstance(123, Units.NANOSECOND));
+        eventHandler.attemptComplete(-1, -1, true, 123, TimeUnit.NANOSECONDS);
 
         Mockito.verify(metricsFactory, Mockito.times(2)).create();
         Mockito.verify(metrics).incrementCounter("metrics_client/apache_http_sink/records", 3);
         Mockito.verify(metrics).incrementCounter("metrics_client/apache_http_sink/bytes", 4);
         Mockito.verify(metrics, Mockito.times(1)).resetCounter("metrics_client/apache_http_sink/success_rate");
-        Mockito.verify(metrics).setTimer("metrics_client/apache_http_sink/latency", 246, Units.NANOSECOND);
+        Mockito.verify(metrics).setTimer("metrics_client/apache_http_sink/latency", 246, TimeUnit.NANOSECONDS);
         Mockito.verify(metrics).close();
         Mockito.verifyNoMoreInteractions(metrics);
     }
@@ -257,9 +257,9 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
             }
             return Optional.of(metricsFactory);
         });
-        eventHandler.attemptComplete(1, 2, true, TsdQuantity.newInstance(123, Units.NANOSECOND));
+        eventHandler.attemptComplete(1, 2, true, 123, TimeUnit.NANOSECONDS);
         semaphore.acquire();
-        eventHandler.attemptComplete(3, 4, false, TsdQuantity.newInstance(246, Units.NANOSECOND));
+        eventHandler.attemptComplete(3, 4, false, 246, TimeUnit.NANOSECONDS);
         semaphore.acquire();
 
         Mockito.verify(metricsFactory, Mockito.times(2)).create();
@@ -269,7 +269,7 @@ public final class InstrumentedApacheHttpSinkEventHandlerTest {
         Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/records", 3);
         Mockito.verify(metricsA).incrementCounter("metrics_client/apache_http_sink/bytes", 4);
         Mockito.verify(metricsA, Mockito.times(1)).resetCounter("metrics_client/apache_http_sink/success_rate");
-        Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 246, Units.NANOSECOND);
+        Mockito.verify(metricsA).setTimer("metrics_client/apache_http_sink/latency", 246, TimeUnit.NANOSECONDS);
         Mockito.verify(metricsA).close();
         Mockito.verifyNoMoreInteractions(metricsA);
     }

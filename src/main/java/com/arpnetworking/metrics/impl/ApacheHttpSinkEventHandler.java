@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2017 Inscope Metrics, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,12 +16,13 @@
 package com.arpnetworking.metrics.impl;
 
 import com.arpnetworking.metrics.Event;
-import com.arpnetworking.metrics.Quantity;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Interface for callbacks from client.
  *
- * @author Ville Koskela (ville dot koskela at inscopemetrics dot com)
+ * @author Ville Koskela (ville dot koskela at inscopemetrics dot io)
  */
 public interface ApacheHttpSinkEventHandler {
 
@@ -32,8 +33,14 @@ public interface ApacheHttpSinkEventHandler {
      * @param bytes the number of bytes sent
      * @param success success or failure
      * @param elapasedTime the elapsed time
+     * @param elapsedTimeUnit the elapsed time unit
      */
-    void attemptComplete(long records, long bytes, boolean success, Quantity elapasedTime);
+    void attemptComplete(
+            long records,
+            long bytes,
+            boolean success,
+            long elapasedTime,
+            TimeUnit elapsedTimeUnit);
 
     /**
      * Callback invoked when an {@link Event} is dropped from the queue.

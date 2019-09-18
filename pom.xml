@@ -29,7 +29,7 @@
   <name>Apache HTTP Sink</name>
   <description>Apache HTTP sink for metrics client.</description>
   <url>https://github.com/ArpNetworking/metrics-sink-http-apache</url>
-  <version>0.9.5-SNAPSHOT</version>
+  <version>0.11.0</version>
 
   <licenses>
     <license>
@@ -43,18 +43,18 @@
   <developers>
     <developer>
       <id>brandonarp</id>
-      <email>brandon.arp@inscopemetrics.com</email>
+      <email>brandon.arp@inscopemetrics.io</email>
       <organization>Inscope Metrics</organization>
-      <organizationUrl>http://www.inscopemetrics.com</organizationUrl>
+      <organizationUrl>http://www.inscopemetrics.io</organizationUrl>
       <roles>
         <role>developer</role>
       </roles>
     </developer>
     <developer>
       <id>villekoskela</id>
-      <email>ville.koskela@inscopemetrics.com</email>
+      <email>ville.koskela@inscopemetrics.io</email>
       <organization>Inscope Metrics</organization>
-      <organizationUrl>http://www.inscopemetrics.com</organizationUrl>
+      <organizationUrl>http://www.inscopemetrics.io</organizationUrl>
       <roles>
         <role>developer</role>
       </roles>
@@ -88,25 +88,25 @@
     -->
 
     <!-- Dependency versions -->
-    <apache.http.client.version>4.5.6</apache.http.client.version>
-    <apache.http.core.version>4.4.10</apache.http.core.version>
+    <apache.http.client.version>4.5.10</apache.http.client.version>
+    <apache.http.core.version>4.4.12</apache.http.core.version>
     <arpnetworking.commons.version>1.18.1</arpnetworking.commons.version>
-    <client.protocol.version>0.10.1</client.protocol.version>
+    <client.protocol.version>0.11.1</client.protocol.version>
     <hamcrest.version>2.1</hamcrest.version>
     <jsr305.version>3.0.2</jsr305.version>
     <junit.version>4.12</junit.version>
-    <metrics.client.version>0.10.1</metrics.client.version>
+    <metrics.client.version>0.11.0-SNAPSHOT</metrics.client.version>
     <mockito.version>2.23.4</mockito.version>
-    <protobuf.version>3.6.1</protobuf.version>
+    <protobuf.version>3.8.0</protobuf.version>
     <slf4j.version>1.7.25</slf4j.version>
-    <wiremock.version>2.20.0</wiremock.version>
+    <wiremock.version>2.24.1</wiremock.version>
 
     <!-- Plugin versions -->
     <maven.shade.plugin.version>3.1.0</maven.shade.plugin.version>
 
     <!-- Code Coverage -->
-    <jacoco.check.line.coverage>0.97</jacoco.check.line.coverage>
-    <jacoco.check.branch.coverage>0.92</jacoco.check.branch.coverage>
+    <jacoco.check.line.coverage>1.0</jacoco.check.line.coverage>
+    <jacoco.check.branch.coverage>1.0</jacoco.check.branch.coverage>
   </properties>
   <build>
     <plugins>
@@ -155,7 +155,7 @@
           <artifactSet>
             <excludes />
             <includes>
-              <include>com.inscopemetrics.client:protocol</include>
+              <include>io.inscopemetrics.client:protocol</include>
               <include>com.google.protobuf:protobuf-java</include>
               <include>org.apache.httpcomponents:httpclient</include>
               <include>org.apache.httpcomponents:httpcore</include>
@@ -165,7 +165,7 @@
           </artifactSet>
           <filters>
             <filter>
-              <artifact>com.inscopemetrics.client:protocol</artifact>
+              <artifact>io.inscopemetrics.client:protocol</artifact>
               <excludes>
                 <exclude>LICENSE</exclude>
                 <exclude>META-INF/**</exclude>
@@ -205,6 +205,10 @@
             </filter>
           </filters>
           <relocations>
+            <relocation>
+              <pattern>io.inscopemetrics.client.protocol</pattern>
+              <shadedPattern>com.arpnetworking.metrics.apachehttpsinkextra.shaded.io.inscopemetrics.client.protocol</shadedPattern>
+            </relocation>
             <relocation>
               <pattern>com.inscopemetrics.client.protocol</pattern>
               <shadedPattern>com.arpnetworking.metrics.apachehttpsinkextra.shaded.com.inscopemetrics.client.protocol</shadedPattern>
@@ -255,7 +259,7 @@
     </dependency>
     <!-- Shaded -->
     <dependency>
-      <groupId>com.inscopemetrics.client</groupId>
+      <groupId>io.inscopemetrics.client</groupId>
       <artifactId>protocol</artifactId>
       <version>${client.protocol.version}</version>
     </dependency>

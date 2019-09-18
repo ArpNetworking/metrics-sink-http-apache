@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2016 Inscope Metrics, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,14 +17,13 @@ package com.arpnetworking.metrics.impl;
 
 import com.arpnetworking.commons.java.util.function.SingletonSupplier;
 import com.arpnetworking.commons.slf4j.RateLimitedLogger;
-import com.arpnetworking.metrics.CompoundUnit;
+import com.arpnetworking.metrics.AggregatedData;
 import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Quantity;
 import com.arpnetworking.metrics.Sink;
 import com.arpnetworking.metrics.StopWatch;
-import com.arpnetworking.metrics.Unit;
 import com.google.protobuf.ByteString;
-import com.inscopemetrics.client.protocol.ClientV2;
+import io.inscopemetrics.client.protocol.ClientV3;
 import org.apache.http.Header;
 import org.apache.http.HttpHeaders;
 import org.apache.http.HttpStatus;
@@ -44,10 +43,13 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutorService;
@@ -56,13 +58,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongConsumer;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
 /**
  * Http sink using the Protobuf format for metrics and the Apache HTTP library.
  *
- * @author Brandon Arp (brandon dot arp at inscopemetrics dot com)
- * @author Ville Koskela (ville dot koskela at inscopemetrics dot com)
+ * @author Brandon Arp (brandon dot arp at inscopemetrics dot io)
+ * @author Ville Koskela (ville dot koskela at inscopemetrics dot io)
  */
 public final class ApacheHttpSink implements Sink {
 
@@ -137,6 +140,7 @@ public final class ApacheHttpSink implements Sink {
         final HttpDispatch httpDispatchWorker = new HttpDispatch(
                 httpClientSupplier,
                 builder._eventsDroppedLoggingInterval,
+                builder._unsupportedDataLoggingInterval,
                 logger,
                 _eventHandler);
         for (int i = 0; i < builder._parallelism; ++i) {
@@ -162,6 +166,7 @@ public final class ApacheHttpSink implements Sink {
         /* package private */ HttpDispatch(
                 final Supplier<CloseableHttpClient> httpClientSupplier,
                 final Duration dispatchErrorLoggingInterval,
+                final Duration unsupportedDataLoggingInterval,
                 final org.slf4j.Logger logger,
                 final Optional<ApacheHttpSinkEventHandler> eventHandler) {
             _httpClientSupplier = httpClientSupplier;
@@ -169,6 +174,10 @@ public final class ApacheHttpSink implements Sink {
                     "DispatchErrorLogger",
                     logger,
                     dispatchErrorLoggingInterval);
+            _unsupportedDataLogger = new RateLimitedLogger(
+                    "UnsupportedDataLogger",
+                    logger,
+                    unsupportedDataLoggingInterval);
             _eventHandler = eventHandler;
         }
 
@@ -180,7 +189,7 @@ public final class ApacheHttpSink implements Sink {
                     // NOTE: This also builds the serialization types in order to spend more time
                     // allowing more records to arrive in the batch
                     int collected = 0;
-                    final ClientV2.RecordSet.Builder requestBuilder = ClientV2.RecordSet.newBuilder();
+                    final ClientV3.Request.Builder requestBuilder = ClientV3.Request.newBuilder();
                     do {
                         @Nullable final Event event = _events.pollFirst();
                         if (event == null) {
@@ -209,13 +218,13 @@ public final class ApacheHttpSink implements Sink {
             }
         }
 
-        private void dispatchRequest(final CloseableHttpClient httpClient, final ClientV2.RecordSet recordSet) {
+        private void dispatchRequest(final CloseableHttpClient httpClient, final ClientV3.Request request) {
             // TODO(ville): We need to add retries.
             // Requests that fail should either go into a different retry queue
             // or else be requeued at the front of the existing queue (unless
             // it's full). The data will need to be wrapped with an attempt
             // count.
-            final ByteArrayEntity entity = new ByteArrayEntity(recordSet.toByteArray());
+            final ByteArrayEntity entity = new ByteArrayEntity(request.toByteArray());
             final HttpPost post = new HttpPost(_uri);
             post.setHeader(CONTENT_TYPE_HEADER);
             post.setEntity(entity);
@@ -255,59 +264,80 @@ public final class ApacheHttpSink implements Sink {
                 stopWatch.stop();
                 if (_eventHandler.isPresent()) {
                     _eventHandler.get().attemptComplete(
-                            recordSet.getRecordsCount(),
+                            request.getRecordsCount(),
                             entity.getContentLength(),
                             success,
-                            stopWatch.getElapsedTime());
+                            stopWatch.getElapsedTime().getValue().longValue(),
+                            stopWatch.getUnit());
                 }
             }
         }
 
-        private ClientV2.Record serializeEvent(final Event event) {
-            final ClientV2.Record.Builder builder = ClientV2.Record.newBuilder();
-            for (final Map.Entry<String, String> annotation : event.getAnnotations().entrySet()) {
-                builder.addAnnotations(
-                        ClientV2.AnnotationEntry.newBuilder()
-                                .setName(annotation.getKey())
-                                .setValue(annotation.getValue())
-                                .build());
-            }
+        private ClientV3.Record serializeEvent(final Event event) {
+            final ClientV3.Record.Builder builder = ClientV3.Record.newBuilder();
+            // CHECKSTYLE.OFF: IllegalInstantiation - No Guava
+            final Set<String> processedMetricName = new HashSet<>();
+            // CHECKSTYLE.ON: IllegalInstantiation
 
             for (final Map.Entry<String, List<Quantity>> entry : event.getCounterSamples().entrySet()) {
-                builder.addCounters(ClientV2.MetricEntry.newBuilder()
-                        .addAllSamples(buildQuantities(entry.getValue()))
-                        .setName(entry.getKey())
+                builder.addData(ClientV3.MetricDataEntry.newBuilder()
+                        .setNumericalData(buildNumericalData(entry.getValue(), event.getAggregatedData().get(entry.getKey())))
+                        .setName(createIdentifier(entry.getKey()))
                         .build());
+                processedMetricName.add(entry.getKey());
             }
 
             for (final Map.Entry<String, List<Quantity>> entry : event.getTimerSamples().entrySet()) {
-                builder.addTimers(ClientV2.MetricEntry.newBuilder()
-                        .addAllSamples(buildQuantities(entry.getValue()))
-                        .setName(entry.getKey())
+                builder.addData(ClientV3.MetricDataEntry.newBuilder()
+                        .setNumericalData(buildNumericalData(entry.getValue(), event.getAggregatedData().get(entry.getKey())))
+                        .setName(createIdentifier(entry.getKey()))
                         .build());
+                processedMetricName.add(entry.getKey());
             }
 
             for (final Map.Entry<String, List<Quantity>> entry : event.getGaugeSamples().entrySet()) {
-                builder.addGauges(ClientV2.MetricEntry.newBuilder()
-                        .addAllSamples(buildQuantities(entry.getValue()))
-                        .setName(entry.getKey())
+                builder.addData(ClientV3.MetricDataEntry.newBuilder()
+                        .setNumericalData(buildNumericalData(entry.getValue(), event.getAggregatedData().get(entry.getKey())))
+                        .setName(createIdentifier(entry.getKey()))
                         .build());
+                processedMetricName.add(entry.getKey());
+            }
+
+            for (final Map.Entry<String, AggregatedData> entry : event.getAggregatedData().entrySet()) {
+                if (!processedMetricName.contains(entry.getKey())) {
+                    builder.addData(ClientV3.MetricDataEntry.newBuilder()
+                            .setNumericalData(buildNumericalData(Collections.emptyList(), entry.getValue()))
+                            .setName(createIdentifier(entry.getKey()))
+                            .build());
+                }
             }
 
             //TODO(brandonarp): just pull from dimensions once the library supports it
             final String host = event.getAnnotations().get("_host");
             if (host != null) {
-                builder.addDimensions(ClientV2.DimensionEntry.newBuilder().setName("host").setValue(host).build());
+                builder.addDimensions(
+                        ClientV3.DimensionEntry.newBuilder()
+                                .setName(createIdentifier("host"))
+                                .setValue(createIdentifier(host))
+                                .build());
             }
 
             final String service = event.getAnnotations().get("_service");
             if (service != null) {
-                builder.addDimensions(ClientV2.DimensionEntry.newBuilder().setName("service").setValue(service).build());
+                builder.addDimensions(
+                        ClientV3.DimensionEntry.newBuilder()
+                                .setName(createIdentifier("service"))
+                                .setValue(createIdentifier(service))
+                                .build());
             }
 
             final String cluster = event.getAnnotations().get("_cluster");
             if (cluster != null) {
-                builder.addDimensions(ClientV2.DimensionEntry.newBuilder().setName("cluster").setValue(cluster).build());
+                builder.addDimensions(
+                        ClientV3.DimensionEntry.newBuilder()
+                                .setName(createIdentifier("cluster"))
+                                .setValue(createIdentifier(cluster))
+                                .build());
             }
 
             extractTimestamp(event, "_end", builder::setEndMillisSinceEpoch);
@@ -322,7 +352,14 @@ public final class ApacheHttpSink implements Sink {
                 buffer.rewind();
                 builder.setId(ByteString.copyFrom(buffer));
             }
+
             return builder.build();
+        }
+
+        private ClientV3.Identifier createIdentifier(final String value) {
+            return ClientV3.Identifier.newBuilder()
+                    .setStringValue(value)
+                    .build();
         }
 
         private void extractTimestamp(final Event event, final String key, final LongConsumer setter) {
@@ -333,87 +370,46 @@ public final class ApacheHttpSink implements Sink {
             }
         }
 
-        private List<ClientV2.Quantity> buildQuantities(final List<Quantity> quantities) {
-            final List<ClientV2.Quantity> timerQuantities = new ArrayList<>(quantities.size());
-            for (final Quantity quantity : quantities) {
-                final ClientV2.Quantity.Builder quantityBuilder = ClientV2.Quantity.newBuilder();
-                final Number quantityValue = quantity.getValue();
-                if (quantityValue instanceof Long
-                        || quantityValue instanceof Integer
-                        || quantityValue instanceof Short
-                        || quantityValue instanceof Byte) {
-                    quantityBuilder.setLongValue(quantityValue.longValue());
-                } else {
-                    quantityBuilder.setDoubleValue(quantityValue.doubleValue());
-                }
-                final ClientV2.CompoundUnit unit = buildUnit(quantity.getUnit());
-                quantityBuilder.setUnit(unit);
-                timerQuantities.add(quantityBuilder.build());
+        private ClientV3.NumericalData buildNumericalData(final List<Quantity> samples, @Nullable final AggregatedData aggregatedData) {
+            final ClientV3.NumericalData.Builder builder = ClientV3.NumericalData.newBuilder();
+            builder.addAllSamples(samples.stream().map(q -> q.getValue().doubleValue()).collect(Collectors.toList()));
+            if (aggregatedData instanceof AugmentedHistogram) {
+                final AugmentedHistogram augmentedHistogram = (AugmentedHistogram) aggregatedData;
+                final long truncateMask = BASE_MASK >> augmentedHistogram.getPrecision();
+                builder.setStatistics(
+                        ClientV3.AugmentedHistogram.newBuilder()
+                                .setPrecision(augmentedHistogram.getPrecision())
+                                .setMin(augmentedHistogram.getMin())
+                                .setMax(augmentedHistogram.getMax())
+                                .setSum(augmentedHistogram.getSum())
+                                .addAllEntries(
+                                        augmentedHistogram.getHistogram()
+                                                .entrySet()
+                                                .stream()
+                                                .map(entry -> ClientV3.SparseHistogramEntry.newBuilder()
+                                                        .setBucket(Double.doubleToRawLongBits(entry.getKey()) & truncateMask)
+                                                        .setCount(entry.getValue())
+                                                        .build())
+                                                ::iterator)
+                                .build()
+                );
+            } else if (aggregatedData != null) {
+                _unsupportedDataLogger.getLogger().error(
+                        String.format(
+                                "Unsupported aggregated data type; class=%s",
+                                aggregatedData.getClass().getName()));
             }
-            return timerQuantities;
-        }
-
-        private ClientV2.CompoundUnit buildUnit(@Nullable final Unit unit) {
-            final ClientV2.CompoundUnit.Builder builder = ClientV2.CompoundUnit.newBuilder();
-
-            if (unit instanceof CompoundUnit) {
-                final CompoundUnit compoundUnit = (CompoundUnit) unit;
-                for (final Unit numeratorUnit : compoundUnit.getNumeratorUnits()) {
-                    builder.addNumerator(mapUnit(numeratorUnit));
-                }
-
-                for (final Unit denominatorUnit : compoundUnit.getDenominatorUnits()) {
-                    builder.addDenominator(mapUnit(denominatorUnit));
-                }
-            } else if (unit != null) {
-                final ClientV2.Unit numeratorUnit = mapUnit(unit);
-                if (numeratorUnit != null) {
-                    builder.addNumerator(numeratorUnit);
-                }
-            }
-            return builder.build();
-        }
-
-        private @Nullable ClientV2.Unit mapUnit(final Unit unit) {
-            final BaseUnit baseUnit;
-            final BaseScale baseScale;
-            if (unit instanceof TsdUnit) {
-                final TsdUnit tsdUnit = (TsdUnit) unit;
-                baseUnit = tsdUnit.getBaseUnit();
-                baseScale = tsdUnit.getBaseScale();
-            } else if (unit instanceof BaseUnit) {
-                baseUnit = (BaseUnit) unit;
-                baseScale = null;
-            } else {
-                return null;
-            }
-
-            final ClientV2.Unit.Builder builder = ClientV2.Unit.newBuilder();
-            try {
-                builder.setType(ClientV2.Unit.Type.Value.valueOf(baseUnit.name()));
-            } catch (final IllegalArgumentException e) {
-                _dispatchErrorLogger.getLogger().warn(
-                        String.format("Dropping unsupported unit %s", baseUnit.name()));
-                builder.setType(ClientV2.Unit.Type.Value.UNKNOWN);
-            }
-            if (baseScale != null) {
-                try {
-                    builder.setScale(ClientV2.Unit.Scale.Value.valueOf(baseScale.name()));
-                } catch (final IllegalArgumentException e) {
-                    _dispatchErrorLogger.getLogger().warn(
-                            String.format("Dropping unsupported scale %s", baseScale.name()));
-                    builder.setScale(ClientV2.Unit.Scale.Value.UNKNOWN);
-                }
-            } else {
-                builder.setScale(ClientV2.Unit.Scale.Value.UNIT);
-            }
-
             return builder.build();
         }
 
         private final Supplier<CloseableHttpClient> _httpClientSupplier;
         private final RateLimitedLogger _dispatchErrorLogger;
+        private final RateLimitedLogger _unsupportedDataLogger;
         private final Optional<ApacheHttpSinkEventHandler> _eventHandler;
+
+        private static final int MANTISSA_BITS = 52;
+        private static final int EXPONENT_BITS = 11;
+        private static final long BASE_MASK = (1L << (MANTISSA_BITS + EXPONENT_BITS)) >> EXPONENT_BITS;
     }
 
     private static final class ShutdownHookThread extends Thread {
@@ -438,8 +434,8 @@ public final class ApacheHttpSink implements Sink {
     /**
      * Builder for {@link ApacheHttpSink}.
      *
-     * @author Brandon Arp (brandon dot arp at inscopemetrics dot com)
-     * @author Ville Koskela (ville dot koskela at inscopemetrics dot com)
+     * @author Brandon Arp (brandon dot arp at inscopemetrics dot io)
+     * @author Ville Koskela (ville dot koskela at inscopemetrics dot io)
      */
     public static final class Builder {
 
@@ -456,7 +452,7 @@ public final class ApacheHttpSink implements Sink {
 
         /**
          * Set the URI of the HTTP endpoint. Optional; default is
-         * {@code http://localhost:7090/metrics/v1/application}.
+         * {@code http://localhost:7090/metrics/v3/application}.
          *
          * @param value The uri of the HTTP endpoint.
          * @return This {@link Builder} instance.
@@ -524,6 +520,19 @@ public final class ApacheHttpSink implements Sink {
          */
         public Builder setDispatchErrorLoggingInterval(@Nullable final Duration value) {
             _dispatchErrorLoggingInterval = value;
+            return this;
+        }
+
+        /**
+         * Set the unsupported data vlogging interval. Any unsupported data
+         * errors will be logged at most once per interval. Optional; default
+         * is 1 minute.
+         *
+         * @param value The logging interval.
+         * @return This {@link Builder} instance.
+         */
+        public Builder setUnsupportedDataLoggingInterval(@Nullable final Duration value) {
+            _unsupportedDataLoggingInterval = value;
             return this;
         }
 
@@ -609,6 +618,12 @@ public final class ApacheHttpSink implements Sink {
                         "Defaulted null dispatch error logging interval; dispatchErrorLoggingInterval=%s",
                         _dispatchErrorLoggingInterval));
             }
+            if (_unsupportedDataLoggingInterval == null) {
+                _unsupportedDataLoggingInterval = DEFAULT_UNSUPPORTED_DATA_LOGGING_INTERVAL;
+                LOGGER.info(String.format(
+                        "Defaulted null unsupported data logging interval; unsupportedDataLoggingInterval=%s",
+                        _unsupportedDataLoggingInterval));
+            }
         }
 
         private void validate(final List<String> failures) {
@@ -624,14 +639,16 @@ public final class ApacheHttpSink implements Sink {
         private Duration _emptyQueueInterval = DEFAULT_EMPTY_QUEUE_INTERVAL;
         private Duration _eventsDroppedLoggingInterval = DEFAULT_EVENTS_DROPPED_LOGGING_INTERVAL;
         private Duration _dispatchErrorLoggingInterval = DEFAULT_DISPATCH_ERROR_LOGGING_INTERVAL;
+        private Duration _unsupportedDataLoggingInterval = DEFAULT_UNSUPPORTED_DATA_LOGGING_INTERVAL;
         private @Nullable ApacheHttpSinkEventHandler _eventHandler;
 
         private static final Integer DEFAULT_BUFFER_SIZE = 10000;
-        private static final URI DEFAULT_URI = URI.create("http://localhost:7090/metrics/v2/application");
+        private static final URI DEFAULT_URI = URI.create("http://localhost:7090/metrics/v3/application");
         private static final Integer DEFAULT_PARALLELISM = 2;
         private static final Integer DEFAULT_MAX_BATCH_SIZE = 500;
         private static final Duration DEFAULT_EMPTY_QUEUE_INTERVAL = Duration.ofMillis(500);
         private static final Duration DEFAULT_EVENTS_DROPPED_LOGGING_INTERVAL = Duration.ofMinutes(1);
         private static final Duration DEFAULT_DISPATCH_ERROR_LOGGING_INTERVAL = Duration.ofMinutes(1);
+        private static final Duration DEFAULT_UNSUPPORTED_DATA_LOGGING_INTERVAL = Duration.ofMinutes(1);
     }
 }

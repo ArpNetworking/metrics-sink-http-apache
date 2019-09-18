@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2017 Inscope Metrics, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,6 @@ package com.arpnetworking.metrics.impl;
 import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Metrics;
 import com.arpnetworking.metrics.MetricsFactory;
-import com.arpnetworking.metrics.Quantity;
 
 import java.util.Optional;
 import java.util.concurrent.Executors;
@@ -38,7 +37,7 @@ import java.util.function.Supplier;
  * TODO(ville): Convert to using PeriodicMetrics from the incubator project.
  * TODO(ville): Add queue length metric by periodically polling the sink.
  *
- * @author Ville Koskela (ville dot koskela at inscopemetrics dot com)
+ * @author Ville Koskela (ville dot koskela at inscopemetrics dot io)
  */
 public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpSinkEventHandler {
 
@@ -47,7 +46,8 @@ public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpS
             final long records,
             final long bytes,
             final boolean success,
-            final Quantity elapasedTime) {
+            final long elapasedTime,
+            final TimeUnit elapsedTimeUnit) {
         try {
             _readWriteLock.readLock().lock();
             if (_metrics != null) {
@@ -59,8 +59,8 @@ public final class InstrumentedApacheHttpSinkEventHandler implements ApacheHttpS
                 }
                 _metrics.setTimer(
                         "metrics_client/apache_http_sink/latency",
-                        elapasedTime.getValue().longValue(),
-                        elapasedTime.getUnit());
+                        elapasedTime,
+                        elapsedTimeUnit);
             }
         } finally {
             _readWriteLock.readLock().unlock();

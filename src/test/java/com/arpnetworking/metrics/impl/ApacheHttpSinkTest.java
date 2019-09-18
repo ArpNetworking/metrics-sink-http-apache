@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright 2016 Inscope Metrics, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,10 @@
  */
 package com.arpnetworking.metrics.impl;
 
+import com.arpnetworking.metrics.AggregatedData;
 import com.arpnetworking.metrics.Event;
 import com.arpnetworking.metrics.Quantity;
 import com.arpnetworking.metrics.Sink;
-import com.arpnetworking.metrics.Units;
 import com.github.tomakehurst.wiremock.client.WireMock;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.github.tomakehurst.wiremock.http.Request;
@@ -27,7 +27,7 @@ import com.github.tomakehurst.wiremock.junit.WireMockRule;
 import com.github.tomakehurst.wiremock.matching.MatchResult;
 import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder;
 import com.github.tomakehurst.wiremock.matching.ValueMatcher;
-import com.inscopemetrics.client.protocol.ClientV2;
+import io.inscopemetrics.client.protocol.ClientV3;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.client.CloseableHttpClient;
@@ -55,13 +55,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
-import javax.annotation.Nullable;
 
 /**
  * Tests for {@link ApacheHttpSink}.
  *
- * @author Brandon Arp (brandon dot arp at inscopemetrics dot com)
- * @author Ville Koskela (ville dot koskela at inscopemetrics dot com)
+ * @author Brandon Arp (brandon dot arp at inscopemetrics dot io)
+ * @author Ville Koskela (ville dot koskela at inscopemetrics dot io)
  */
 public final class ApacheHttpSinkTest {
 
@@ -82,6 +81,7 @@ public final class ApacheHttpSinkTest {
         builder.setEmptyQueueInterval(null);
         builder.setDispatchErrorLoggingInterval(null);
         builder.setEventsDroppedLoggingInteval(null);
+        builder.setUnsupportedDataLoggingInterval(null);
         builder.setEmptyQueueInterval(null);
         final Sink sink = builder.build();
         Assert.assertNotNull(sink);
@@ -116,15 +116,6 @@ public final class ApacheHttpSinkTest {
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
                         r -> {
-                            // Annotations
-                            Assert.assertEquals(7, r.getAnnotationsCount());
-                            assertAnnotation(r.getAnnotationsList(), "foo", "bar");
-                            assertAnnotation(r.getAnnotationsList(), "_service", "myservice");
-                            assertAnnotation(r.getAnnotationsList(), "_cluster", "mycluster");
-                            assertAnnotation(r.getAnnotationsList(), "_start", start);
-                            assertAnnotation(r.getAnnotationsList(), "_end", end);
-                            assertAnnotation(r.getAnnotationsList(), "_id", id);
-
                             // Dimensions
                             Assert.assertEquals(3, r.getDimensionsCount());
                             assertDimension(r.getDimensionsList(), "host", "some.host.com");
@@ -132,40 +123,31 @@ public final class ApacheHttpSinkTest {
                             assertDimension(r.getDimensionsList(), "cluster", "mycluster");
 
                             // Samples
-                            assertSample(
-                                    r.getTimersList(),
+                            Assert.assertEquals(6, r.getDataOrBuilderList().size());
+                            assertMetricData(
+                                    r.getDataList(),
                                     "timerLong",
-                                    123L,
-                                    ClientV2.Unit.Type.Value.SECOND,
-                                    ClientV2.Unit.Scale.Value.NANO);
-                            assertSample(
-                                    r.getTimersList(),
+                                    123L);
+                            assertMetricData(
+                                    r.getDataList(),
                                     "timerInt",
-                                    123,
-                                    ClientV2.Unit.Type.Value.SECOND,
-                                    ClientV2.Unit.Scale.Value.NANO);
-                            assertSample(
-                                    r.getTimersList(),
+                                    123);
+                            assertMetricData(
+                                    r.getDataList(),
                                     "timerShort",
-                                    (short) 123,
-                                    ClientV2.Unit.Type.Value.SECOND,
-                                    ClientV2.Unit.Scale.Value.NANO);
-                            assertSample(
-                                    r.getTimersList(),
+                                    (short) 123);
+                            assertMetricData(
+                                    r.getDataList(),
                                     "timerByte",
-                                    (byte) 123,
-                                    ClientV2.Unit.Type.Value.SECOND,
-                                    ClientV2.Unit.Scale.Value.NANO);
-                            assertSample(
-                                    r.getCountersList(),
+                                    (byte) 123);
+                            assertMetricData(
+                                    r.getDataList(),
                                     "counter",
                                     8d);
-                            assertSample(
-                                    r.getGaugesList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "gauge",
-                                    10d,
-                                    ClientV2.Unit.Type.Value.BYTE,
-                                    ClientV2.Unit.Scale.Value.UNIT);
+                                    10d);
                         }))
                         .willReturn(WireMock.aResponse()
                                 .withStatus(200)));
@@ -178,7 +160,7 @@ public final class ApacheHttpSinkTest {
                         new AttemptCompletedAssertionHandler(
                                 assertionResult,
                                 1,
-                                451,
+                                270,
                                 true,
                                 new CompletionHandler(semaphore)))
                 .build();
@@ -194,12 +176,13 @@ public final class ApacheHttpSinkTest {
 
         final TsdEvent event = new TsdEvent(
                 annotations,
-                createQuantityMap("timerLong", TsdQuantity.newInstance(123L, Units.NANOSECOND),
-                        "timerInt", TsdQuantity.newInstance(123, Units.NANOSECOND),
-                        "timerShort", TsdQuantity.newInstance((short) 123, Units.NANOSECOND),
-                        "timerByte", TsdQuantity.newInstance((byte) 123, Units.NANOSECOND)),
-                createQuantityMap("counter", TsdQuantity.newInstance(8d, null)),
-                createQuantityMap("gauge", TsdQuantity.newInstance(10d, Units.BYTE)));
+                createQuantityMap("timerLong", TsdQuantity.newInstance(123L),
+                        "timerInt", TsdQuantity.newInstance(123),
+                        "timerShort", TsdQuantity.newInstance((short) 123),
+                        "timerByte", TsdQuantity.newInstance((byte) 123)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8d)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(10d)),
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -218,45 +201,86 @@ public final class ApacheHttpSinkTest {
     // CHECKSTYLE.ON: MethodLength
 
     @Test
-    public void testCompoundUnits() throws InterruptedException {
+    public void testAugmentedHistogram() throws InterruptedException {
+        // CHECKSTYLE.OFF: IllegalInstantiation - No Guava
+        final Map<Double, Integer> histogram = new HashMap<>();
+        // CHECKSTYLE.ON: IllegalInstantiation
+        histogram.put(1.0, 1);
+        histogram.put(2.0, 2);
+        histogram.put(3.0, 3);
+
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
                         r -> {
-                            // Annotations
-                            Assert.assertEquals(0, r.getAnnotationsCount());
-
                             // Dimensions
                             Assert.assertEquals(0, r.getDimensionsCount());
 
                             // Samples
-                            Assert.assertEquals(0, r.getTimersCount());
-                            Assert.assertEquals(0, r.getTimersCount());
-                            assertSample(
-                                    r.getGaugesList(),
-                                    "gauge",
-                                    10d,
-                                    ClientV2.Unit.Type.Value.BIT,
-                                    ClientV2.Unit.Scale.Value.UNIT,
-                                    ClientV2.Unit.Type.Value.SECOND,
-                                    ClientV2.Unit.Scale.Value.UNIT);
+                            Assert.assertEquals(2, r.getDataOrBuilderList().size());
+                            assertMetricData(
+                                    r.getDataList(),
+                                    "timerLong",
+                                    123L);
+                            assertMetricData(
+                                    r.getDataList(),
+                                    "augmentedHistogram",
+                                    ClientV3.AugmentedHistogram.newBuilder()
+                                            .setSum(14.0)
+                                            .setMin(1.0)
+                                            .setMax(3.0)
+                                            .setPrecision(7)
+                                            .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
+                                                    .setCount(1)
+                                                    .setBucket(histogramKey(1.0, 7))
+                                                    .build())
+                                            .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
+                                                    .setCount(2)
+                                                    .setBucket(histogramKey(2.0, 7))
+                                                    .build())
+                                            .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
+                                                    .setCount(3)
+                                                    .setBucket(histogramKey(3.0, 7))
+                                                    .build())
+                                            .build());
                         }))
                         .willReturn(WireMock.aResponse()
                                 .withStatus(200)));
 
+        final AtomicBoolean assertionResult = new AtomicBoolean(false);
         final Semaphore semaphore = new Semaphore(0);
-        final Sink sink = new ApacheHttpSink.Builder()
-                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
-                .setEventHandler(new CompletionHandler(semaphore))
-                .build();
+        final org.slf4j.Logger logger = Mockito.mock(org.slf4j.Logger.class);
+        final Sink sink = new ApacheHttpSink(
+                new ApacheHttpSink.Builder()
+                        .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                        .setEventHandler(
+                                new AttemptCompletedAssertionHandler(
+                                        assertionResult,
+                                        1,
+                                        128,
+                                        true,
+                                        new CompletionHandler(semaphore))),
+                logger);
 
         final TsdEvent event = new TsdEvent(
                 Collections.emptyMap(),
-                createQuantityMap(),
-                createQuantityMap(),
-                createQuantityMap("gauge", TsdQuantity.newInstance(10d, Units.BITS_PER_SECOND)));
+                createQuantityMap("timerLong", TsdQuantity.newInstance(123L)),
+                TEST_EMPTY_SERIALIZATION_COUNTERS,
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.singletonMap(
+                        "augmentedHistogram",
+                        new AugmentedHistogram.Builder()
+                                .setSum(14.0)
+                                .setMinimum(1.0)
+                                .setMaximum(3.0)
+                                .setPrecision(7)
+                                .setHistogram(histogram)
+                                .build()));
 
         sink.record(event);
         semaphore.acquire();
+
+        // Ensure expected handler was invoked
+        Assert.assertTrue(assertionResult.get());
 
         // Request matcher
         final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
@@ -268,27 +292,177 @@ public final class ApacheHttpSinkTest {
     }
 
     @Test
-    public void testNoUnits() throws InterruptedException {
+    public void testAugmentedHistogramAndSamplesMerged() throws InterruptedException {
+        // CHECKSTYLE.OFF: IllegalInstantiation - No Guava
+        final Map<Double, Integer> histogram = new HashMap<>();
+        // CHECKSTYLE.ON: IllegalInstantiation
+        histogram.put(1.0, 1);
+        histogram.put(2.0, 2);
+        histogram.put(3.0, 3);
+
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
                         r -> {
-                            // Annotations
-                            Assert.assertEquals(0, r.getAnnotationsCount());
-
                             // Dimensions
                             Assert.assertEquals(0, r.getDimensionsCount());
 
                             // Samples
-                            assertSample(
-                                    r.getTimersList(),
+                            Assert.assertEquals(1, r.getDataOrBuilderList().size());
+                            assertMetricData(
+                                    r.getDataList(),
+                                    "mergedData",
+                                    Collections.singletonList(123.0),
+                                    ClientV3.AugmentedHistogram.newBuilder()
+                                            .setSum(14.0)
+                                            .setMin(1.0)
+                                            .setMax(3.0)
+                                            .setPrecision(7)
+                                            .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
+                                                    .setCount(1)
+                                                    .setBucket(histogramKey(1.0, 7))
+                                                    .build())
+                                            .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
+                                                    .setCount(2)
+                                                    .setBucket(histogramKey(2.0, 7))
+                                                    .build())
+                                            .addEntries(ClientV3.SparseHistogramEntry.newBuilder()
+                                                    .setCount(3)
+                                                    .setBucket(histogramKey(3.0, 7))
+                                                    .build())
+                                            .build());
+                        }))
+                        .willReturn(WireMock.aResponse()
+                                .withStatus(200)));
+
+        final AtomicBoolean assertionResult = new AtomicBoolean(false);
+        final Semaphore semaphore = new Semaphore(0);
+        final org.slf4j.Logger logger = Mockito.mock(org.slf4j.Logger.class);
+        final Sink sink = new ApacheHttpSink(
+                new ApacheHttpSink.Builder()
+                        .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                        .setEventHandler(
+                                new AttemptCompletedAssertionHandler(
+                                        assertionResult,
+                                        1,
+                                        103,
+                                        true,
+                                        new CompletionHandler(semaphore))),
+                logger);
+
+        final TsdEvent event = new TsdEvent(
+                Collections.emptyMap(),
+                createQuantityMap("mergedData", TsdQuantity.newInstance(123.0)),
+                TEST_EMPTY_SERIALIZATION_COUNTERS,
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.singletonMap(
+                        "mergedData",
+                        new AugmentedHistogram.Builder()
+                                .setSum(14.0)
+                                .setMinimum(1.0)
+                                .setMaximum(3.0)
+                                .setPrecision(7)
+                                .setHistogram(histogram)
+                                .build()));
+
+        sink.record(event);
+        semaphore.acquire();
+
+        // Ensure expected handler was invoked
+        Assert.assertTrue(assertionResult.get());
+
+        // Request matcher
+        final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
+                .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
+
+        // Assert that data was sent
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
+    }
+
+    @Test
+    public void testUnsupportedAggregateData() throws InterruptedException {
+        _wireMockRule.stubFor(
+                WireMock.requestMatching(new RequestValueMatcher(
+                        r -> {
+                            // Dimensions
+                            Assert.assertEquals(0, r.getDimensionsCount());
+
+                            // Samples
+                            Assert.assertEquals(2, r.getDataOrBuilderList().size());
+                            assertMetricData(
+                                    r.getDataList(),
+                                    "timerLong",
+                                    123L);
+                            // NOTE: The other metric is the empty record unsupportedAggregatedDataTypeMetric
+                        }))
+                        .willReturn(WireMock.aResponse()
+                                .withStatus(200)));
+
+        final AtomicBoolean assertionResult = new AtomicBoolean(false);
+        final Semaphore semaphore = new Semaphore(0);
+        final org.slf4j.Logger logger = Mockito.mock(org.slf4j.Logger.class);
+        final Sink sink = new ApacheHttpSink(
+                new ApacheHttpSink.Builder()
+                        .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
+                        .setEventHandler(
+                                new AttemptCompletedAssertionHandler(
+                                        assertionResult,
+                                        1,
+                                        72,
+                                        true,
+                                        new CompletionHandler(semaphore))),
+                logger);
+
+        final TsdEvent event = new TsdEvent(
+                Collections.emptyMap(),
+                createQuantityMap("timerLong", TsdQuantity.newInstance(123L)),
+                TEST_EMPTY_SERIALIZATION_COUNTERS,
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.singletonMap(
+                        "unsupportedAggregatedDataTypeMetric",
+                        new TestUnsupportedAggregatedData()));
+
+        sink.record(event);
+        semaphore.acquire();
+
+        // Ensure expected handler was invoked
+        Assert.assertTrue(assertionResult.get());
+
+        // Request matcher
+        final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
+                .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
+
+        // Assert that data was sent
+        _wireMockRule.verify(1, requestPattern);
+        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
+
+        // Verify that
+        Mockito.verify(logger).error(
+                Mockito.startsWith(
+                        String.format(
+                                "Unsupported aggregated data type; class=%s",
+                                TestUnsupportedAggregatedData.class.getName())));
+    }
+
+    @Test
+    public void testNoUnits() throws InterruptedException {
+        _wireMockRule.stubFor(
+                WireMock.requestMatching(new RequestValueMatcher(
+                        r -> {
+                            // Dimensions
+                            Assert.assertEquals(0, r.getDimensionsCount());
+
+                            // Samples
+                            assertMetricData(
+                                    r.getDataList(),
                                     "timer",
                                     7d);
-                            assertSample(
-                                    r.getCountersList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "counter",
                                     8d);
-                            assertSample(
-                                    r.getGaugesList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "gauge",
                                     9d);
                         }))
@@ -303,9 +477,10 @@ public final class ApacheHttpSinkTest {
 
         final TsdEvent event = new TsdEvent(
                 Collections.emptyMap(),
-                createQuantityMap("timer", TsdQuantity.newInstance(7d, null)),
-                createQuantityMap("counter", TsdQuantity.newInstance(8d, null)),
-                createQuantityMap("gauge", TsdQuantity.newInstance(9d, null)));
+                createQuantityMap("timer", TsdQuantity.newInstance(7d)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8d)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(9d)),
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -324,23 +499,20 @@ public final class ApacheHttpSinkTest {
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
                         r -> {
-                            // Annotations
-                            Assert.assertEquals(0, r.getAnnotationsCount());
-
                             // Dimensions
                             Assert.assertEquals(0, r.getDimensionsCount());
 
                             // Samples
-                            assertSample(
-                                    r.getTimersList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "timer",
                                     7d);
-                            assertSample(
-                                    r.getCountersList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "counter",
                                     8d);
-                            assertSample(
-                                    r.getGaugesList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "gauge",
                                     9d);
                         }))
@@ -358,7 +530,7 @@ public final class ApacheHttpSinkTest {
                         new AttemptCompletedAssertionHandler(
                                 assertionResult,
                                 3,
-                                210,
+                                219,
                                 true,
                                 new CompletionHandler(
                                         semaphore)))
@@ -366,9 +538,10 @@ public final class ApacheHttpSinkTest {
 
         final TsdEvent event = new TsdEvent(
                 Collections.emptyMap(),
-                createQuantityMap("timer", TsdQuantity.newInstance(7d, null)),
-                createQuantityMap("counter", TsdQuantity.newInstance(8d, null)),
-                createQuantityMap("gauge", TsdQuantity.newInstance(9d, null)));
+                createQuantityMap("timer", TsdQuantity.newInstance(7d)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8d)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(9d)),
+                Collections.emptyMap());
 
         for (int x = 0; x < 3; x++) {
             sink.record(event);
@@ -392,23 +565,20 @@ public final class ApacheHttpSinkTest {
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
                         r -> {
-                            // Annotations
-                            Assert.assertEquals(0, r.getAnnotationsCount());
-
                             // Dimensions
                             Assert.assertEquals(0, r.getDimensionsCount());
 
                             // Samples
-                            assertSample(
-                                    r.getTimersList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "timer",
                                     7d);
-                            assertSample(
-                                    r.getCountersList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "counter",
                                     8d);
-                            assertSample(
-                                    r.getGaugesList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "gauge",
                                     9d);
                         }))
@@ -426,9 +596,10 @@ public final class ApacheHttpSinkTest {
 
         final TsdEvent event = new TsdEvent(
                 Collections.emptyMap(),
-                createQuantityMap("timer", TsdQuantity.newInstance(7d, null)),
-                createQuantityMap("counter", TsdQuantity.newInstance(8d, null)),
-                createQuantityMap("gauge", TsdQuantity.newInstance(9d, null)));
+                createQuantityMap("timer", TsdQuantity.newInstance(7d)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8d)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(9d)),
+                Collections.emptyMap());
 
         for (int x = 0; x < 5; x++) {
             sink.record(event);
@@ -457,23 +628,20 @@ public final class ApacheHttpSinkTest {
                         r -> {
                             recordsReceived.incrementAndGet();
 
-                            // Annotations
-                            Assert.assertEquals(0, r.getAnnotationsCount());
-
                             // Dimensions
                             Assert.assertEquals(0, r.getDimensionsCount());
 
                             // Samples
-                            assertSample(
-                                    r.getTimersList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "timer",
                                     7d);
-                            assertSample(
-                                    r.getCountersList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "counter",
                                     8d);
-                            assertSample(
-                                    r.getGaugesList(),
+                            assertMetricData(
+                                    r.getDataList(),
                                     "gauge",
                                     9d);
                         }))
@@ -491,9 +659,10 @@ public final class ApacheHttpSinkTest {
 
         final TsdEvent event = new TsdEvent(
                 Collections.emptyMap(),
-                createQuantityMap("timer", TsdQuantity.newInstance(7d, null)),
-                createQuantityMap("counter", TsdQuantity.newInstance(8d, null)),
-                createQuantityMap("gauge", TsdQuantity.newInstance(9d, null)));
+                createQuantityMap("timer", TsdQuantity.newInstance(7d)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8d)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(9d)),
+                Collections.emptyMap());
 
         // Add one event to be used as a synchronization point
         sink.record(event);
@@ -522,66 +691,15 @@ public final class ApacheHttpSinkTest {
     }
 
     @Test
-    public void testCustomUnit() throws InterruptedException {
-        _wireMockRule.stubFor(
-                WireMock.requestMatching(new RequestValueMatcher(
-                        r -> {
-                            // Annotations
-                            Assert.assertEquals(0, r.getAnnotationsCount());
-
-                            // Dimensions
-                            Assert.assertEquals(0, r.getDimensionsCount());
-
-                            // Samples
-                            assertSample(
-                                    r.getTimersList(),
-                                    "timer",
-                                    8d);
-                            Assert.assertEquals(0, r.getCountersCount());
-                            Assert.assertEquals(0, r.getGaugesCount());
-                        }))
-                        .willReturn(WireMock.aResponse()
-                                .withStatus(200)));
-
-        final Semaphore semaphore = new Semaphore(0);
-        final Sink sink = new ApacheHttpSink.Builder()
-                .setUri(URI.create("http://localhost:" + _wireMockRule.port() + PATH))
-                .setEventHandler(new CompletionHandler(semaphore))
-                .build();
-
-        final TsdEvent event = new TsdEvent(
-                Collections.emptyMap(),
-                createQuantityMap("timer", TsdQuantity.newInstance(8d, () -> "Foo")),
-                TEST_EMPTY_SERIALIZATION_COUNTERS,
-                TEST_EMPTY_SERIALIZATION_GAUGES);
-
-        sink.record(event);
-        semaphore.acquire();
-
-        // Request matcher
-        final RequestPatternBuilder requestPattern = WireMock.postRequestedFor(WireMock.urlEqualTo(PATH))
-                .withHeader("Content-Type", WireMock.equalTo("application/octet-stream"));
-
-        // Assert that data was sent
-        _wireMockRule.verify(1, requestPattern);
-        Assert.assertTrue(_wireMockRule.findUnmatchedRequests().getRequests().isEmpty());
-    }
-
-    @Test
     public void testEndpointNotAvailable() throws InterruptedException {
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
                         r -> {
-                            // Annotations
-                            Assert.assertEquals(0, r.getAnnotationsCount());
-
                             // Dimensions
                             Assert.assertEquals(0, r.getDimensionsCount());
 
                             // Samples
-                            Assert.assertEquals(0, r.getTimersCount());
-                            Assert.assertEquals(0, r.getCountersCount());
-                            Assert.assertEquals(0, r.getGaugesCount());
+                            Assert.assertEquals(0, r.getDataList().size());
                         }))
                         .willReturn(WireMock.aResponse()
                                 .withStatus(404)));
@@ -606,7 +724,8 @@ public final class ApacheHttpSinkTest {
                 ANNOTATIONS,
                 TEST_EMPTY_SERIALIZATION_TIMERS,
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
-                TEST_EMPTY_SERIALIZATION_GAUGES);
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -633,16 +752,11 @@ public final class ApacheHttpSinkTest {
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
                         r -> {
-                            // Annotations
-                            Assert.assertEquals(0, r.getAnnotationsCount());
-
                             // Dimensions
                             Assert.assertEquals(0, r.getDimensionsCount());
 
                             // Samples
-                            Assert.assertEquals(0, r.getTimersCount());
-                            Assert.assertEquals(0, r.getCountersCount());
-                            Assert.assertEquals(0, r.getGaugesCount());
+                            Assert.assertEquals(0, r.getDataList().size());
                         }))
                         .willReturn(WireMock.aResponse()
                                 .withStatus(400)));
@@ -667,7 +781,8 @@ public final class ApacheHttpSinkTest {
                 ANNOTATIONS,
                 TEST_EMPTY_SERIALIZATION_TIMERS,
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
-                TEST_EMPTY_SERIALIZATION_GAUGES);
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -702,7 +817,8 @@ public final class ApacheHttpSinkTest {
                 ANNOTATIONS,
                 TEST_EMPTY_SERIALIZATION_TIMERS,
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
-                TEST_EMPTY_SERIALIZATION_GAUGES);
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -742,7 +858,8 @@ public final class ApacheHttpSinkTest {
                 ANNOTATIONS,
                 TEST_EMPTY_SERIALIZATION_TIMERS,
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
-                TEST_EMPTY_SERIALIZATION_GAUGES);
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -781,7 +898,8 @@ public final class ApacheHttpSinkTest {
                 ANNOTATIONS,
                 TEST_EMPTY_SERIALIZATION_TIMERS,
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
-                TEST_EMPTY_SERIALIZATION_GAUGES);
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -828,7 +946,8 @@ public final class ApacheHttpSinkTest {
                 ANNOTATIONS,
                 TEST_EMPTY_SERIALIZATION_TIMERS,
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
-                TEST_EMPTY_SERIALIZATION_GAUGES);
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -874,7 +993,8 @@ public final class ApacheHttpSinkTest {
                 ANNOTATIONS,
                 TEST_EMPTY_SERIALIZATION_TIMERS,
                 TEST_EMPTY_SERIALIZATION_COUNTERS,
-                TEST_EMPTY_SERIALIZATION_GAUGES);
+                TEST_EMPTY_SERIALIZATION_GAUGES,
+                Collections.emptyMap());
 
         sink.record(event);
         semaphore.acquire();
@@ -897,7 +1017,8 @@ public final class ApacheHttpSinkTest {
                 Mockito.anyLong(),
                 Mockito.anyLong(),
                 Mockito.anyBoolean(),
-                Mockito.any(Quantity.class));
+                Mockito.anyLong(),
+                Mockito.any(TimeUnit.class));
     }
 
     @Test
@@ -924,9 +1045,10 @@ public final class ApacheHttpSinkTest {
 
         final TsdEvent event = new TsdEvent(
                 annotations,
-                createQuantityMap("timer", TsdQuantity.newInstance(123, Units.NANOSECOND)),
-                createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
-                createQuantityMap("gauge", TsdQuantity.newInstance(10, Units.BYTE)));
+                createQuantityMap("timer", TsdQuantity.newInstance(123)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(10)),
+                Collections.emptyMap());
 
         sink.stop();
         Thread.sleep(1000);
@@ -963,9 +1085,10 @@ public final class ApacheHttpSinkTest {
 
         final TsdEvent event = new TsdEvent(
                 annotations,
-                createQuantityMap("timer", TsdQuantity.newInstance(123, Units.NANOSECOND)),
-                createQuantityMap("counter", TsdQuantity.newInstance(8, null)),
-                createQuantityMap("gauge", TsdQuantity.newInstance(10, Units.BYTE)));
+                createQuantityMap("timer", TsdQuantity.newInstance(123)),
+                createQuantityMap("counter", TsdQuantity.newInstance(8)),
+                createQuantityMap("gauge", TsdQuantity.newInstance(10)),
+                Collections.emptyMap());
 
         sink.record(event);
     }
@@ -1009,110 +1132,86 @@ public final class ApacheHttpSinkTest {
         return map;
     }
 
-    private static void assertSample(
-            final List<ClientV2.MetricEntry> samples,
+    private static void assertMetricData(
+            final List<ClientV3.MetricDataEntry> metricData,
             final String name,
-            final double value) {
-        assertSample(samples, name, value, null);
-    }
-
-    private void assertSample(
-            final List<ClientV2.MetricEntry> samples,
-            final String name,
-            final double value,
-            final ClientV2.Unit.Type.Value numeratorUnitType,
-            final ClientV2.Unit.Scale.Value numeratorUnitScale,
-            final ClientV2.Unit.Type.Value denominatorUnitType,
-            final ClientV2.Unit.Scale.Value denominatorUnitScale) {
-        assertSample(
-                samples,
-                name,
-                value,
-                ClientV2.CompoundUnit.newBuilder()
-                        .addNumerator(
-                                0,
-                                ClientV2.Unit.newBuilder()
-                                        .setScale(numeratorUnitScale)
-                                        .setType(numeratorUnitType)
-                                        .build())
-                        .addDenominator(
-                                0,
-                                ClientV2.Unit.newBuilder()
-                                        .setScale(denominatorUnitScale)
-                                        .setType(denominatorUnitType)
-                                        .build())
-                        .build());
-    }
-
-    private static void assertSample(
-            final List<ClientV2.MetricEntry> samples,
-            final String name,
-            final Number value,
-            final ClientV2.Unit.Type.Value unitType,
-            final ClientV2.Unit.Scale.Value unitScale) {
-        assertSample(
-                samples,
-                name,
-                value,
-                ClientV2.CompoundUnit.newBuilder()
-                        .addNumerator(
-                                0,
-                                ClientV2.Unit.newBuilder()
-                                        .setScale(unitScale)
-                                        .setType(unitType)
-                                        .build())
-                        .build());
-    }
-
-    private static void assertSample(
-            final List<ClientV2.MetricEntry> samples,
-            final String name,
-            final Number value,
-            @Nullable final ClientV2.CompoundUnit compoundUnit) {
-
-        final ClientV2.Quantity.Builder protobufSample = ClientV2.Quantity.newBuilder();
-        if (value instanceof Double || value instanceof Float) {
-            protobufSample.setDoubleValue(value.doubleValue());
-        } else {
-            protobufSample.setLongValue(value.longValue());
-        }
-        if (compoundUnit != null) {
-            protobufSample.setUnit(compoundUnit);
-        } else {
-            protobufSample.setUnit(ClientV2.CompoundUnit.newBuilder().build());
-        }
-
+            final List<Double> samples,
+            final ClientV3.AugmentedHistogram augmentedHistogram) {
         Assert.assertTrue(
-                String.format("Missing sample: name=%s, value=%s (%s)", name, value, value.getClass().getName()),
-                samples.contains(
-                        ClientV2.MetricEntry.newBuilder()
-                                .setName(name)
-                                .addSamples(
-                                        0,
-                                        protobufSample.build())
+                String.format(
+                        "Missing metric data: name=%s, samples=%s, augmentedHistogram=%s",
+                        name,
+                        samples,
+                        augmentedHistogram),
+                metricData.contains(
+                        ClientV3.MetricDataEntry.newBuilder()
+                                .setNumericalData(
+                                        ClientV3.NumericalData.newBuilder()
+                                                .addAllSamples(samples)
+                                                .setStatistics(augmentedHistogram)
+                                                .build())
+                                .setName(createIdentifier(name))
                                 .build()));
     }
 
-    private static void assertAnnotation(
-            final List<ClientV2.AnnotationEntry> annotations,
+    private static void assertMetricData(
+            final List<ClientV3.MetricDataEntry> metricData,
             final String name,
-            final String value) {
-        Assert.assertTrue(annotations.contains(
-                ClientV2.AnnotationEntry.newBuilder()
-                        .setName(name)
-                        .setValue(value)
-                        .build()));
+            final ClientV3.AugmentedHistogram augmentedHistogram) {
+        Assert.assertTrue(
+                String.format(
+                        "Missing metric data: name=%s, augmentedHistogram=%s",
+                        name,
+                        augmentedHistogram),
+                metricData.contains(
+                        ClientV3.MetricDataEntry.newBuilder()
+                                .setNumericalData(
+                                        ClientV3.NumericalData.newBuilder()
+                                                .setStatistics(augmentedHistogram)
+                                                .build())
+                                .setName(createIdentifier(name))
+                                .build()));
+    }
+
+    private static void assertMetricData(
+            final List<ClientV3.MetricDataEntry> metricData,
+            final String name,
+            final Number sample) {
+        Assert.assertTrue(
+                String.format(
+                        "Missing metric data: name=%s, sample=%s",
+                        name,
+                        sample),
+                metricData.contains(
+                        ClientV3.MetricDataEntry.newBuilder()
+                                .setNumericalData(
+                                        ClientV3.NumericalData.newBuilder()
+                                                .addSamples(sample.doubleValue())
+                                                .build())
+                                .setName(createIdentifier(name))
+                                .build()));
     }
 
     private static void assertDimension(
-            final List<ClientV2.DimensionEntry> dimensions,
+            final List<ClientV3.DimensionEntry> dimensions,
             final String name,
             final String value) {
         Assert.assertTrue(dimensions.contains(
-                ClientV2.DimensionEntry.newBuilder()
-                        .setName(name)
-                        .setValue(value)
+                ClientV3.DimensionEntry.newBuilder()
+                        .setName(createIdentifier(name))
+                        .setValue(createIdentifier(value))
                         .build()));
+    }
+
+    private static ClientV3.Identifier createIdentifier(final String value) {
+        return ClientV3.Identifier.newBuilder()
+                .setStringValue(value)
+                .build();
+    }
+
+    private static long histogramKey(final double value, final int precision) {
+        final long truncateMask = 0xfff0000000000000L >> precision;
+        return Double.doubleToRawLongBits(value) & truncateMask;
     }
 
     @Rule
@@ -1147,7 +1246,8 @@ public final class ApacheHttpSinkTest {
                 final long records,
                 final long bytes,
                 final boolean success,
-                final Quantity elapasedTime) {
+                final long elapasedTime,
+                final TimeUnit elapsedTimeUnit) {
             if (_semaphoreA.availablePermits() == 0) {
                 // Initial synchronization request (leave a an extra permit to mark its completion)
                 _semaphoreA.release(2);
@@ -1190,9 +1290,10 @@ public final class ApacheHttpSinkTest {
                 final long records,
                 final long bytes,
                 final boolean success,
-                final Quantity elapasedTime) {
+                final long elapasedTime,
+                final TimeUnit elapsedTimeUnit) {
             _semaphore.release();
-            _nextHandler.ifPresent(h -> h.attemptComplete(records, bytes, success, elapasedTime));
+            _nextHandler.ifPresent(h -> h.attemptComplete(records, bytes, success, elapasedTime, elapsedTimeUnit));
         }
 
         @Override
@@ -1239,7 +1340,8 @@ public final class ApacheHttpSinkTest {
                 final long records,
                 final long bytes,
                 final boolean success,
-                final Quantity elapasedTime) {
+                final long elapasedTime,
+                final TimeUnit elapsedTimeUnit) {
             try {
                 Assert.assertEquals(_expectedRecords, records);
                 Assert.assertEquals(_expectedBytes, bytes);
@@ -1250,7 +1352,7 @@ public final class ApacheHttpSinkTest {
                 // CHECKSTYLE.ON: IllegalCatch
                 _assertionResult.set(false);
             }
-            _nextHandler.ifPresent(h -> h.attemptComplete(records, bytes, success, elapasedTime));
+            _nextHandler.ifPresent(h -> h.attemptComplete(records, bytes, success, elapasedTime, elapsedTimeUnit));
         }
 
         @Override
@@ -1281,8 +1383,9 @@ public final class ApacheHttpSinkTest {
                 final long records,
                 final long bytes,
                 final boolean success,
-                final Quantity elapasedTime) {
-            _nextHandler.ifPresent(h -> h.attemptComplete(records, bytes, success, elapasedTime));
+                final long elapasedTime,
+                final TimeUnit elapsedTimeUnit) {
+            _nextHandler.ifPresent(h -> h.attemptComplete(records, bytes, success, elapasedTime, elapsedTimeUnit));
         }
 
         @Override
@@ -1294,31 +1397,31 @@ public final class ApacheHttpSinkTest {
 
     private static class RequestValueMatcher implements ValueMatcher<Request> {
 
-        private final Consumer<ClientV2.Record> _validator;
+        private final Consumer<ClientV3.Record> _validator;
 
-        /* package private */ RequestValueMatcher(final Consumer<ClientV2.Record> validator) {
+        /* package private */ RequestValueMatcher(final Consumer<ClientV3.Record> validator) {
             _validator = validator;
         }
 
         @Override
-        public MatchResult match(final Request request) {
-            if (!request.getMethod().equals(RequestMethod.POST)) {
+        public MatchResult match(final Request httpRequest) {
+            if (!httpRequest.getMethod().equals(RequestMethod.POST)) {
                 System.out.println(String.format(
                         "Request method does not match; expect=%s, actual=%s",
                         RequestMethod.POST,
-                        request.getMethod()));
+                        httpRequest.getMethod()));
                 return MatchResult.noMatch();
             }
-            if (!request.getUrl().equals(PATH)) {
+            if (!httpRequest.getUrl().equals(PATH)) {
                 System.out.println(String.format(
                         "Request uri does not match; expect=%s, actual=%s",
                         PATH,
-                        request.getUrl()));
+                        httpRequest.getUrl()));
                 return MatchResult.noMatch();
             }
             try {
-                final ClientV2.RecordSet recordSet = ClientV2.RecordSet.parseFrom(request.getBody());
-                recordSet.getRecordsList().forEach(_validator::accept);
+                final ClientV3.Request request = ClientV3.Request.parseFrom(httpRequest.getBody());
+                request.getRecordsList().forEach(_validator::accept);
                 return MatchResult.of(true);
                 // CHECKSTYLE.OFF: IllegalCatch - JUnit throws assertions which derive from Throwable
             } catch (final Throwable t) {
@@ -1328,5 +1431,9 @@ public final class ApacheHttpSinkTest {
                 return MatchResult.noMatch();
             }
         }
+    }
+
+    private static final class TestUnsupportedAggregatedData implements AggregatedData {
+        // Intentionally empty
     }
 }
