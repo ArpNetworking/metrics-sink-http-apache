@@ -376,7 +376,6 @@ public final class ApacheHttpSink implements Sink {
             if (aggregatedData instanceof AugmentedHistogram) {
                 final AugmentedHistogram augmentedHistogram = (AugmentedHistogram) aggregatedData;
                 final int precision = augmentedHistogram.getPrecision();
-                final long truncateMask = BASE_MASK >> precision;
                 final long packMask = (1 << (precision + EXPONENT_BITS + 1)) - 1;
                 builder.setStatistics(
                         ClientV3.AugmentedHistogram.newBuilder()
@@ -389,8 +388,8 @@ public final class ApacheHttpSink implements Sink {
                                                 .entrySet()
                                                 .stream()
                                                 .map(entry -> {
-                                                    final long truncatedKey = Double.doubleToRawLongBits(entry.getKey()) & truncateMask;
-                                                    final long shiftedKey = truncatedKey >> (MANTISSA_BITS - precision);
+                                                    final long truncatedKeyAsLong = Double.doubleToRawLongBits(entry.getKey());
+                                                    final long shiftedKey = truncatedKeyAsLong >> (MANTISSA_BITS - precision);
                                                     final long packedKey = shiftedKey & packMask;
                                                     return ClientV3.SparseHistogramEntry.newBuilder()
                                                             .setBucket(packedKey)
@@ -531,7 +530,7 @@ public final class ApacheHttpSink implements Sink {
         }
 
         /**
-         * Set the unsupported data vlogging interval. Any unsupported data
+         * Set the unsupported data logging interval. Any unsupported data
          * errors will be logged at most once per interval. Optional; default
          * is 1 minute.
          *
