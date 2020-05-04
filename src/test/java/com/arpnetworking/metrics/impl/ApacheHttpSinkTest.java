@@ -117,7 +117,8 @@ public final class ApacheHttpSinkTest {
                 WireMock.requestMatching(new RequestValueMatcher(
                         r -> {
                             // Dimensions
-                            Assert.assertEquals(3, r.getDimensionsCount());
+                            Assert.assertEquals(4, r.getDimensionsCount());
+                            assertDimension(r.getDimensionsList(), "foo", "bar");
                             assertDimension(r.getDimensionsList(), "host", "some.host.com");
                             assertDimension(r.getDimensionsList(), "service", "myservice");
                             assertDimension(r.getDimensionsList(), "cluster", "mycluster");
@@ -160,7 +161,7 @@ public final class ApacheHttpSinkTest {
                         new AttemptCompletedAssertionHandler(
                                 assertionResult,
                                 1,
-                                270,
+                                286,
                                 true,
                                 new CompletionHandler(semaphore)))
                 .build();
