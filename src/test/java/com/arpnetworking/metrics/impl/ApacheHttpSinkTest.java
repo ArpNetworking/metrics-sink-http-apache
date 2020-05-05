@@ -204,11 +204,11 @@ public final class ApacheHttpSinkTest {
     @Test
     public void testAugmentedHistogram() throws InterruptedException {
         // CHECKSTYLE.OFF: IllegalInstantiation - No Guava
-        final Map<Double, Integer> histogram = new HashMap<>();
+        final Map<Double, Long> histogram = new HashMap<>();
         // CHECKSTYLE.ON: IllegalInstantiation
-        histogram.put(1.0, 1);
-        histogram.put(2.0, 2);
-        histogram.put(3.0, 3);
+        histogram.put(1.0, 1L);
+        histogram.put(2.0, 2L);
+        histogram.put(3.0, 3L);
 
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
@@ -295,11 +295,11 @@ public final class ApacheHttpSinkTest {
     @Test
     public void testAugmentedHistogramAndSamplesMerged() throws InterruptedException {
         // CHECKSTYLE.OFF: IllegalInstantiation - No Guava
-        final Map<Double, Integer> histogram = new HashMap<>();
+        final Map<Double, Long> histogram = new HashMap<>();
         // CHECKSTYLE.ON: IllegalInstantiation
-        histogram.put(1.0, 1);
-        histogram.put(2.0, 2);
-        histogram.put(3.0, 3);
+        histogram.put(1.0, 1L);
+        histogram.put(2.0, 2L);
+        histogram.put(3.0, 3L);
 
         _wireMockRule.stubFor(
                 WireMock.requestMatching(new RequestValueMatcher(
