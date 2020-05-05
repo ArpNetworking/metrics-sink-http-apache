@@ -91,7 +91,7 @@
     <apache.http.client.version>4.5.10</apache.http.client.version>
     <apache.http.core.version>4.4.12</apache.http.core.version>
     <arpnetworking.commons.version>1.18.1</arpnetworking.commons.version>
-    <client.protocol.version>0.11.1</client.protocol.version>
+    <client.protocol.version>0.11.2</client.protocol.version>
     <hamcrest.version>2.1</hamcrest.version>
     <jsr305.version>3.0.2</jsr305.version>
     <junit.version>4.12</junit.version>

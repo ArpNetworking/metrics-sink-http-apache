@@ -158,8 +158,28 @@ public final class ApacheHttpSink implements Sink {
     private final AtomicInteger _eventsCount = new AtomicInteger(0);
     private final AtomicBoolean _isRunning = new AtomicBoolean(true);
 
-    private static final Header CONTENT_TYPE_HEADER = new BasicHeader(HttpHeaders.CONTENT_TYPE, "application/octet-stream");
     private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger(ApacheHttpSink.class);
+    private static final Header CONTENT_TYPE_HEADER = new BasicHeader(HttpHeaders.CONTENT_TYPE, "application/octet-stream");
+    private static final Set<String> PREFIXED_ANNOTATION_KEYS;
+    private static final Set<String> RESERVED_ANNOTATION_KEYS;
+
+    static {
+        // CHECKSTYLE.OFF: IllegalInstantiation - No Guava
+        final Set<String> reservedKeys = new HashSet<>();
+        // CHECKSTYLE.ON: IllegalInstantiation
+        reservedKeys.add("_end");
+        reservedKeys.add("_start");
+        reservedKeys.add("_id");
+        RESERVED_ANNOTATION_KEYS = Collections.unmodifiableSet(reservedKeys);
+
+        // CHECKSTYLE.OFF: IllegalInstantiation - No Guava
+        final Set<String> prefixedKeys = new HashSet<>();
+        // CHECKSTYLE.ON: IllegalInstantiation
+        prefixedKeys.add("_host");
+        prefixedKeys.add("_service");
+        prefixedKeys.add("_cluster");
+        PREFIXED_ANNOTATION_KEYS = Collections.unmodifiableSet(prefixedKeys);
+    }
 
     private final class HttpDispatch implements Runnable {
 
@@ -312,32 +332,24 @@ public final class ApacheHttpSink implements Sink {
                 }
             }
 
-            //TODO(brandonarp): just pull from dimensions once the library supports it
-            final String host = event.getAnnotations().get("_host");
-            if (host != null) {
-                builder.addDimensions(
-                        ClientV3.DimensionEntry.newBuilder()
-                                .setName(createIdentifier("host"))
-                                .setValue(createIdentifier(host))
-                                .build());
-            }
-
-            final String service = event.getAnnotations().get("_service");
-            if (service != null) {
-                builder.addDimensions(
-                        ClientV3.DimensionEntry.newBuilder()
-                                .setName(createIdentifier("service"))
-                                .setValue(createIdentifier(service))
-                                .build());
-            }
-
-            final String cluster = event.getAnnotations().get("_cluster");
-            if (cluster != null) {
-                builder.addDimensions(
-                        ClientV3.DimensionEntry.newBuilder()
-                                .setName(createIdentifier("cluster"))
-                                .setValue(createIdentifier(cluster))
-                                .build());
+            for (final Map.Entry<String, String> dimension : event.getAnnotations().entrySet()) {
+                final String key = dimension.getKey();
+                final String value = dimension.getValue();
+                if (PREFIXED_ANNOTATION_KEYS.contains(key)) {
+                    // Special prefixed dimensions
+                    builder.addDimensions(
+                            ClientV3.DimensionEntry.newBuilder()
+                                    .setName(createIdentifier(key.substring(1)))
+                                    .setValue(createIdentifier(value))
+                                    .build());
+                } else if (!RESERVED_ANNOTATION_KEYS.contains(key)) {
+                    // User specified dimensions
+                    builder.addDimensions(
+                            ClientV3.DimensionEntry.newBuilder()
+                                    .setName(createIdentifier(key))
+                                    .setValue(createIdentifier(value))
+                                    .build());
+                }
             }
 
             extractTimestamp(event, "_end", builder::setEndMillisSinceEpoch);
