@@ -74,7 +74,7 @@ public final class ApacheHttpSink implements Sink {
         _events.push(event);
         final int events = _eventsCount.incrementAndGet();
         if (events > _bufferSize) {
-            _eventsDroppedLogger.getLogger().warn(
+            _eventsDroppedLogger.warn(
                     "Event queue is full; dropping event(s)");
             final Event droppedEvent = _events.pollFirst();
             _eventHandler.ifPresent(eh -> eh.droppedEvent(droppedEvent));
@@ -233,7 +233,7 @@ public final class ApacheHttpSink implements Sink {
                     // CHECKSTYLE.OFF: IllegalCatch - Ensure exception neutrality
                 } catch (final RuntimeException e) {
                     // CHECKSTYLE.ON: IllegalCatch
-                    _dispatchErrorLogger.getLogger().error("MetricsSinkApacheHttpWorker failure", e);
+                    _dispatchErrorLogger.error("MetricsSinkApacheHttpWorker failure", e);
                 }
             }
         }
@@ -264,7 +264,7 @@ public final class ApacheHttpSink implements Sink {
                     throw new RuntimeException("Endpoint not available");
                 }
                 if ((statusCode / 100) != 2) {
-                    _dispatchErrorLogger.getLogger().error(
+                    _dispatchErrorLogger.error(
                             String.format(
                                     "Received failure response when sending metrics to HTTP endpoint; uri=%s, status=%s",
                                     _uri,
@@ -275,7 +275,7 @@ public final class ApacheHttpSink implements Sink {
                 // CHECKSTYLE.OFF: IllegalCatch - Prevent leaking exceptions; it makes testing more complex
             } catch (final RuntimeException | IOException e) {
                 // CHECKSTYLE.ON: IllegalCatch
-                _dispatchErrorLogger.getLogger().error(
+                _dispatchErrorLogger.error(
                         String.format(
                                 "Encountered failure when sending metrics to HTTP endpoint; uri=%s",
                                 _uri),
@@ -412,7 +412,7 @@ public final class ApacheHttpSink implements Sink {
                                 .build()
                 );
             } else if (aggregatedData != null) {
-                _unsupportedDataLogger.getLogger().error(
+                _unsupportedDataLogger.error(
                         String.format(
                                 "Unsupported aggregated data type; class=%s",
                                 aggregatedData.getClass().getName()));
