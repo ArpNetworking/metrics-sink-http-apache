@@ -29,7 +29,7 @@
   <name>Apache HTTP Sink</name>
   <description>Apache HTTP sink for metrics client.</description>
   <url>https://github.com/ArpNetworking/metrics-sink-http-apache</url>
-  <version>0.11.3-SNAPSHOT</version>
+  <version>0.11.2-SNAPSHOT</version>
 
   <licenses>
     <license>
