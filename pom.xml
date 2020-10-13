@@ -94,7 +94,7 @@
     <client.protocol.version>0.11.3</client.protocol.version>
     <hamcrest.version>2.2</hamcrest.version>
     <jsr305.version>3.0.2</jsr305.version>
-    <junit.version>4.13</junit.version>
+    <junit.version>4.13.1</junit.version>
     <metrics.client.version>0.11.2</metrics.client.version>
     <mockito.version>2.23.4</mockito.version>
     <protobuf.version>3.10.0</protobuf.version>
